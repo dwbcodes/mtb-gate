@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "mtb_gate",
+  "project_id": "7f972351-f470-40d0-a12c-c2a7dc84572b"
+}

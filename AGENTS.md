@@ -1,0 +1,190 @@
+# AGENTS.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+MTB Gate is a monorepo for an MTB standing-start timing system with:
+- Two ESP32 gates (start and finish) that communicate via **ESP-Now** for low-latency direct device-to-device messaging
+  - Currently testing with ESP32-C3 DevKit M1; will switch to ESP32 WROOM when available
+- NFC rider identification via phone scan
+- Offline-first attempt capture with idempotent one-time cloud sync
+- Local device dashboard on start gate
+
+The project unifies firmware across both gates, with role assignment and ESP-Now peer MAC provided at build time. Each device runs its own Wi-Fi AP for configuration and can connect to a station network; ESP-Now operates independently of router-backed Wi-Fi networking.
+
+## Change Tracking with Beads
+
+All code or documentation changes in this repository must be tracked with Beads (`bd`).
+
+- Before starting implementation, inspect existing work with `bd ready` and create or select a bead for the task.
+- Use `bd create` for new work that is not already represented, and keep the bead ID associated with the change.
+- Update the bead as work progresses with concise notes when useful, especially for hardware-test results or firmware behavior changes.
+- Close the bead only after the change is implemented and verified.
+- Do not leave repo changes untracked by Beads unless the user explicitly says not to use `bd`.
+
+## Workspaces
+
+The monorepo uses npm workspaces in `/packages`, `/services`, and `/apps`:
+
+- **packages/contracts**: TypeScript wire protocol types and domain helpers shared across device and API layers
+- **packages/simulator**: CLI practice-session simulator for testing overlapping runs offline
+- **services/api**: Node-based dev server for testing cloud sync endpoint; runs on port 8787 in dev
+- **apps/device-ui**: Captive portal static UI served by start gate (configuration, live countdown, results display)
+- **firmware/**: PlatformIO-managed ESP32-C3 firmware; uses shared embedded code in `firmware/shared/`
+
+## Building and Testing
+
+### TypeScript (Node.js)
+
+```sh
+npm test                    # Run all Node tests in tests/**/*.test.ts
+npm run simulate            # Run local simulator CLI
+npm run api:dev             # Start local API server on :8787
+```
+
+TypeScript runs natively via Node.js with `--experimental-strip-types`, no build step.
+
+### Firmware (C++)
+
+```sh
+make build-start             # Build start-gate firmware; peer defaults to finish gate
+make build-finish            # Build finish-gate firmware; peer defaults to start gate
+make upload-start PORT=/dev/ttyACM0
+make upload-finish PORT=/dev/ttyACM0
+make upload-monitor-start
+make upload-monitor-finish
+make monitor BAUD=115200    # Open serial monitor only
+make clean                  # Remove .pio build outputs
+make size                   # Print memory usage
+make check                  # Run tests + firmware build (quick CI check)
+```
+
+**PlatformIO Core**: Repo maintains its own core in `firmware/.platformio-core/` to avoid global installation.
+- **Board**: esp32-c3-devkitm-1 (currently testing with C3; will switch to esp32dev for WROOM)
+- **Framework**: Arduino
+- **Monitor**: 115200 baud (USB CDC on C3)
+- **Build flags**: C++17, USB CDC enabled (C3 native USB)
+- **Default device MACs**: start `dc:b4:d9:9c:48:ec`, finish `0c:4e:a0:66:a4:14`; pass `PEER_MAC=...` only to override the default peer for a build.
+
+**Firmware structure**:
+- `firmware/gate/src/main.cpp`: Entry point
+- `firmware/shared/include/`: Headers for shared logic (gate types, config, run queue, sensors, riders, NFC)
+- `firmware/shared/src/`: Implementation (gate config, run queue, rider store, NFC reader)
+
+### USB on WSL
+
+```sh
+make attach-usb             # Auto-find and attach ESP32 to WSL
+make attach-usb BUSID=1-3   # Attach specific device
+make reattach-upload        # Attach USB, then flash
+```
+
+Default USB_MATCH regex: `Espressif|USB JTAG|CDC ACM`; override with `make attach-usb USB_MATCH="..."`
+
+## Architecture
+
+### Data Flow
+
+1. **Device Role Assignment**: Each gate is compiled as start or finish via Make/PlatformIO build flags; role is not stored in NVS and cannot be changed from the web UI or serial console
+2. **Run Management**: Start gate queues overlapping runs via `run_queue.h` abstraction; each run has deterministic `runId`
+3. **NFC Rider Identification**: Riders registered on-device via NFC tap, stored in `rider_store.h` (32-entry NVS-backed)
+4. **Countdown & Timing**: Start gate owns all timestamps via `millis()`, coordinates countdown (100ms resolution), and stamps three timing metrics:
+   - Reaction: GO → Line 1 sensor
+   - Launch: Line 1 → Line 2 sensor (new dual-sensor support)
+   - Course: Line 1 → Finish gate signal (via ESP-Now)
+5. **ESP-Now Inter-Gate Communication**: Finish gate sends finish events to start gate via low-latency messages (independent of Wi-Fi; supports distances up to ~250m)
+6. **Sensor Abstraction**: Pressure sensors (MPXV7002DP) abstracted in `sensor_gate.h` for mocking during dev; dual sensors on start gate (pins 2, 3)
+7. **Offline Ingest**: Runs captured locally; payloads idempotent and uploadable to AWS when network available
+8. **Wi-Fi** (Configuration & Cloud Sync): Each device:
+   - Creates own AP (default SSID `MTBGate-<device-id>`, password `changeme123`)
+   - Optionally joins a station network (both configured via device UI)
+   - Configuration page accessible from either network at `http://192.168.4.1/`
+   - Uses Wi-Fi only for admin/configuration and cloud uploads; does not depend on Wi-Fi for timing operations
+
+### Firmware Abstractions
+
+- **gate_config.h/cpp**: Persistent NVS storage for AP/station SSID/password, thresholds (line1, line2, finish), Wi-Fi channel, and device label
+- **run_queue.h**: Queue for overlapping runs with deterministic ID generation; supports stampLine2() for dual-sensor timing
+- **rider_store.h/cpp**: Persistent NVS rider registration (32-entry max), keyed by tagId
+- **nfc_reader.h/cpp**: NFC tag reader abstraction (mock in dev, real PN532 I2C in production)
+- **sensor_gate.h**: Sensor read abstraction; mock vs. real sensors can be swapped
+
+### Cloud Sync Pattern
+
+**Device → Cloud**: One-time HTTP POST of offline-captured runs to AWS Lambda endpoint when network available.
+- Payload includes idempotent `runId` for deduplication
+- No retry/broker infrastructure needed; simple REST with automatic retry on failure
+- Device does not track or process data after upload
+
+**Scope boundary**: All processing (storage, analytics, aggregation, results UI generation) happens in AWS after upload and is **out of scope for this device-side plan**.
+
+### Device UI
+
+- **Device UI** (`apps/device-ui/`): Captive portal served by start gate on `192.168.4.1`
+  - NFC registration panel: "Tap NFC" button triggers 15-second listen window, on tag detect prompts for display name
+  - Rider roster: shows all registered riders (tagId, display name)
+  - Live countdown display during runs
+  - Recent attempts table with three timing metrics (Reaction, Launch, Course)
+  - Calibration section: thresholds for all three sensors and Wi-Fi channel
+  - Auto-refresh every 2 seconds via `/api/status` polling
+
+### Testing
+
+- Node tests use Node's `--test` runner with TypeScript strip-types
+- Simulator (`packages/simulator/cli.ts`) generates deterministic overlapping runs for vertical-slice testing
+- Firmware compiles as a single environment (`gate`) with role and peer MAC supplied by Make build flags
+
+## Development Workflows
+
+### Running a Local Vertical Slice
+
+```sh
+npm run simulate                # Generate practice runs with line2 triggers
+npm run api:dev                 # Start API in another terminal
+# Manual testing via curl or browser
+```
+
+### Firmware + Serial Debugging
+
+```sh
+make upload-monitor-start   # Flash start gate and watch serial output
+make upload-monitor-finish  # Flash finish gate and watch serial output
+# In another terminal:
+make devices                    # List serial ports
+```
+
+Serial commands (type in monitor):
+- `status`: Print build role and current config
+- `wifi`: Show Wi-Fi status
+- `scan=<tagId>`: Inject a tag (for testing listen mode or starting a run)
+
+### Device Configuration
+
+After flashing:
+1. Connect phone/laptop to `MTBGate-<device-id>` AP
+2. Open `http://192.168.4.1/`
+3. Set thresholds (line1, line2, finish), AP/station credentials, and Wi-Fi channel
+4. Changes persist to NVS
+
+## Key Technical Details
+
+- **Unified Firmware**: Single PlatformIO app; role and ESP-Now peer MAC are supplied at build time
+- **Three Timing Metrics**: All timestamps use start gate's `millis()`. Finish gate is a pure detector; it sends finish event, start gate stamps the time on ESP-Now receipt
+- **ESP-Now Messaging**: Gates communicate finish events peer-to-peer; operates independently from router-backed Wi-Fi networking; requires peer MAC passed to Make at build time
+- **Dual Sensors on Start Gate**: Line 1 (pin 2) and Line 2 (pin 3); each with 500ms debounce; stampLine2() updates run record without changing status
+- **NFC Registration**: Riders stored on-device with deterministic riderId generation (`rider-<tagId>`); 32-entry max capacity
+- **Idempotent Cloud Sync**: Offline runs captured with `runId`; HTTP POST to Lambda uses `runId` for deduplication on device side; cloud handles final idempotency
+- **REST over MQTT**: Simple HTTP POST chosen over MQTT because: (1) one-shot, unidirectional data flow (device → cloud only), (2) no multi-subscriber pattern, (3) avoids broker infrastructure
+- **TypeScript Configuration**: ES2022 target, NodeNext modules, strict mode; no emit (type-checking only)
+- **Node Execution**: Uses `--experimental-strip-types` to run `.ts` files directly; no tsc build step needed
+- **Launch Metric**: Calculated as `diffMs(startTriggeredAt, line2TriggeredAt)`; can be null if line2 trigger hasn't occurred yet
+
+## Debugging Tips
+
+- **Firmware build failures**: Check `make clean` first; verify PlatformIO core with `make pio-info`
+- **USB device not found on WSL**: Run `make attach-usb` to auto-detect and attach via usbipd
+- **Serial monitor showing garbage**: Verify baud rate is 115200 and device is in CDC mode
+- **Tests failing**: Ensure all workspaces are installed (`npm install` at root) and TypeScript strict mode is satisfied
+- **Line2 not triggering in simulator**: Verify triggerLine2() calls are present in cli.ts between triggerStart() and triggerFinish()
+- **Launch metric is null in results**: Check that line2TriggeredAt was set; if not, run did not reach line 2
