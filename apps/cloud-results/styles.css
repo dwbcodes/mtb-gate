@@ -1,0 +1,266 @@
+:root {
+  --bg: #f4efe8;
+  --panel: rgba(255, 255, 255, 0.82);
+  --ink: #1d2a2f;
+  --muted: #5f6c6f;
+  --accent: #d26a2e;
+  --accent-soft: #f0c9ad;
+  --border: rgba(29, 42, 47, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(210, 106, 46, 0.16), transparent 32%),
+    linear-gradient(160deg, #f6f0e7 0%, #dae4d9 100%);
+  color: var(--ink);
+}
+
+.shell {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 32px 20px 48px;
+}
+
+.topbar,
+.hero,
+.controls,
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  backdrop-filter: blur(18px);
+  box-shadow: 0 18px 48px rgba(29, 42, 47, 0.08);
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 22px;
+  margin-bottom: 18px;
+}
+
+.brand {
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+.menu {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.menu-link {
+  text-decoration: none;
+  color: var(--muted);
+  padding: 10px 14px;
+  border-radius: 999px;
+}
+
+.menu-link.is-active {
+  background: rgba(210, 106, 46, 0.14);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.hero {
+  padding: 28px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.75rem;
+}
+
+.hero h1,
+.panel h2 {
+  margin: 0;
+}
+
+.summary {
+  max-width: 42rem;
+  color: var(--muted);
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin: 18px 0;
+  padding: 20px;
+}
+
+.home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.controls label {
+  display: grid;
+  gap: 8px;
+}
+
+.controls span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+input,
+button {
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  padding: 12px 14px;
+  font: inherit;
+}
+
+button {
+  align-self: end;
+  background: linear-gradient(120deg, var(--accent) 0%, #b84a18 100%);
+  color: white;
+  border: none;
+  cursor: pointer;
+}
+
+.panel {
+  padding: 20px;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: baseline;
+}
+
+.metrics-grid,
+.summary-grid,
+.results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.metrics-grid {
+  margin: 18px 0;
+}
+
+.summary-grid,
+.results {
+  margin-top: 18px;
+}
+
+.metric-card,
+.feature-card,
+.rider-card,
+.attempt {
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 16px;
+}
+
+.feature-card h2 {
+  margin: 0 0 10px;
+}
+
+.feature-card p {
+  color: var(--muted);
+}
+
+.cta {
+  display: inline-block;
+  margin-top: 10px;
+  text-decoration: none;
+  color: white;
+  background: linear-gradient(120deg, var(--accent) 0%, #b84a18 100%);
+  padding: 12px 16px;
+  border-radius: 14px;
+}
+
+.subtle {
+  font-size: 0.95rem;
+}
+
+.metric-card p,
+.metric-card strong,
+.metric-card span {
+  margin: 0;
+}
+
+.metric-card strong {
+  display: block;
+  font-size: 2rem;
+  margin: 10px 0 6px;
+}
+
+.rider-card header h3,
+.attempt header h3 {
+  margin: 0;
+}
+
+.metric-card p,
+.metric-card span,
+.rider-card header p,
+.attempt header p,
+.empty,
+#status,
+#attemptMeta {
+  color: var(--muted);
+}
+
+.rider-card dl,
+.attempt dl {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 0;
+}
+
+.rider-card dl div,
+.attempt dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+dt {
+  color: var(--muted);
+}
+
+dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+@media (max-width: 640px) {
+  .shell {
+    padding: 18px 14px 32px;
+  }
+
+  .topbar,
+  .hero,
+  .controls,
+  .panel {
+    border-radius: 18px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

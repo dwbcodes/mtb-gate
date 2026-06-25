@@ -5,13 +5,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 MTB Gate is a monorepo for an MTB standing-start timing system with:
-- Two ESP32 gates (start and finish) that communicate via **ESP-Now** for low-latency direct device-to-device messaging
+- A minimum of two ESP32 gates (start and finish) that communicate via **ESP-Now** for low-latency direct device-to-device messaging
   - Currently testing with ESP32-C3 DevKit M1; will switch to ESP32 WROOM when available
-- NFC rider identification via phone scan
-- Offline-first attempt capture with idempotent one-time cloud sync
+- NFC rider identification via NFC module
 - Local device dashboard on start gate
 
-The project unifies firmware across both gates, with role assignment and ESP-Now peer MAC provided at build time. Each device runs its own Wi-Fi AP for configuration and can connect to a station network; ESP-Now operates independently of router-backed Wi-Fi networking.
+The project unifies firmware across both gates. Role and peer MAC are configured at runtime via the device web UI and stored in NVS. Each device runs its own Wi-Fi AP for configuration and can connect to a station network; ESP-Now operates independently of router-backed Wi-Fi networking.
+
+### Product Intent
+
+The system exists so a team can practice MTB standing starts cheaply and robustly:
+- A rider identifies themselves at the start gate by swiping an NFC tag (or card) to the start gate.
+- The start gate counts down from a user defined number (default 10) to GO via a voice prompt and a visual countdown on the start gate's display.
+- The rider crosses a pressure-tube sensor at the start and another at the finish gate.
+- The finish gate reports the finish event back to the start gate, which displays timing metrics for the run, this needs to be transactional and reliable even if the finish gate is out of range or loses power.
+- Multiple riders may have overlapping attempts, and each rider may make multiple attempts.
+- Results should remain usable offline and uploaded when network access is available.
+
+Implementation should use professional software design principles. Future cloud/backend work is expected to use AWS APIs, DynamoDB single-table design, and microservice/DDD patterns where appropriate.
+
+### Product Setup / Initialization.
+
+The system is designed to be easy to set up and use by non-technical users. The following steps are expected to be performed by the end user:
+
+1. It is expected that the user will recieve the two gates pre-flashed.
+2. The user will power on the gates and add the Mac address of the finish gate to the start gate via the captive portal.
+3. The Start gate will be then be used as the controller for the system, and the user will be able to configure the countdown, Wi-Fi settings, and other parameters via the captive portal.  There should be no need for the user to connect to the finish gate directly, as it will be automatically detected by the start gate via ESP-Now.
+4. The Finish gate should use the same network configuration as the start gate, if the start gate is not connected to an AP, then the Finish gate should connect to the start gate's AP and configure the Finish gate with the IP + 1 of the start gate's IP.  If the start gate is connected to an AP, then the Finish gate should connect to the same AP and configure itself with a static IP that is one greater than the start gate's IP.  The user should be able to connect to the Start gates AP and connect to either device.
+
 
 ## Change Tracking with Beads
 
@@ -48,24 +69,23 @@ TypeScript runs natively via Node.js with `--experimental-strip-types`, no build
 ### Firmware (C++)
 
 ```sh
-make build-start             # Build start-gate firmware; peer defaults to finish gate
-make build-finish            # Build finish-gate firmware; peer defaults to start gate
-make upload-start PORT=/dev/ttyACM0
-make upload-finish PORT=/dev/ttyACM0
-make upload-monitor-start
-make upload-monitor-finish
+make build                   # Build unified gate firmware
+make upload                  # Flash to /dev/ttyACM0 and /dev/ttyACM1 (both devices)
+make upload PORT=/dev/ttyACM0  # Flash a single device
+make upload-monitor          # Flash, then open serial monitor
 make monitor BAUD=115200    # Open serial monitor only
 make clean                  # Remove .pio build outputs
 make size                   # Print memory usage
 make check                  # Run tests + firmware build (quick CI check)
 ```
 
+After flashing, connect to the device's AP and visit `http://192.168.4.1/` to set the role (start/finish) and peer MAC.
+
 **PlatformIO Core**: Repo maintains its own core in `firmware/.platformio-core/` to avoid global installation.
 - **Board**: esp32-c3-devkitm-1 (currently testing with C3; will switch to esp32dev for WROOM)
 - **Framework**: Arduino
 - **Monitor**: 115200 baud (USB CDC on C3)
 - **Build flags**: C++17, USB CDC enabled (C3 native USB)
-- **Default device MACs**: start `dc:b4:d9:9c:48:ec`, finish `0c:4e:a0:66:a4:14`; pass `PEER_MAC=...` only to override the default peer for a build.
 
 **Firmware structure**:
 - `firmware/gate/src/main.cpp`: Entry point
@@ -86,7 +106,7 @@ Default USB_MATCH regex: `Espressif|USB JTAG|CDC ACM`; override with `make attac
 
 ### Data Flow
 
-1. **Device Role Assignment**: Each gate is compiled as start or finish via Make/PlatformIO build flags; role is not stored in NVS and cannot be changed from the web UI or serial console
+1. **Device Role Assignment**: Both gates run identical firmware. Role (start/finish/intermediate) and peer MAC are set at runtime via the web UI and persisted to NVS. No per-gate build step is required.
 2. **Run Management**: Start gate queues overlapping runs via `run_queue.h` abstraction; each run has deterministic `runId`
 3. **NFC Rider Identification**: Riders registered on-device via NFC tap, stored in `rider_store.h` (32-entry NVS-backed)
 4. **Countdown & Timing**: Start gate owns all timestamps via `millis()`, coordinates countdown (100ms resolution), and stamps three timing metrics:
@@ -133,7 +153,7 @@ Default USB_MATCH regex: `Espressif|USB JTAG|CDC ACM`; override with `make attac
 
 - Node tests use Node's `--test` runner with TypeScript strip-types
 - Simulator (`packages/simulator/cli.ts`) generates deterministic overlapping runs for vertical-slice testing
-- Firmware compiles as a single environment (`gate`) with role and peer MAC supplied by Make build flags
+- Firmware compiles as a single environment (`gate`); role and peer MAC are configured at runtime via the web UI
 
 ## Development Workflows
 
@@ -148,8 +168,7 @@ npm run api:dev                 # Start API in another terminal
 ### Firmware + Serial Debugging
 
 ```sh
-make upload-monitor-start   # Flash start gate and watch serial output
-make upload-monitor-finish  # Flash finish gate and watch serial output
+make upload-monitor         # Flash and watch serial output
 # In another terminal:
 make devices                    # List serial ports
 ```
@@ -169,9 +188,9 @@ After flashing:
 
 ## Key Technical Details
 
-- **Unified Firmware**: Single PlatformIO app; role and ESP-Now peer MAC are supplied at build time
+- **Unified Firmware**: Single PlatformIO app flashed identically to both devices; role and peer MAC configured at runtime via web UI and persisted to NVS
 - **Three Timing Metrics**: All timestamps use start gate's `millis()`. Finish gate is a pure detector; it sends finish event, start gate stamps the time on ESP-Now receipt
-- **ESP-Now Messaging**: Gates communicate finish events peer-to-peer; operates independently from router-backed Wi-Fi networking; requires peer MAC passed to Make at build time
+- **ESP-Now Messaging**: Gates communicate finish events peer-to-peer; operates independently from router-backed Wi-Fi networking; peer MAC set via web UI
 - **Dual Sensors on Start Gate**: Line 1 (pin 2) and Line 2 (pin 3); each with 500ms debounce; stampLine2() updates run record without changing status
 - **NFC Registration**: Riders stored on-device with deterministic riderId generation (`rider-<tagId>`); 32-entry max capacity
 - **Idempotent Cloud Sync**: Offline runs captured with `runId`; HTTP POST to Lambda uses `runId` for deduplication on device side; cloud handles final idempotency

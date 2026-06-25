@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MTB Gate Home</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <nav class="topbar">
+        <a class="brand" href="./index.html">MTB Gate</a>
+        <div class="menu">
+          <a class="menu-link is-active" href="./index.html">Home</a>
+          <a class="menu-link" href="./today.html">Today&rsquo;s Metrics</a>
+        </div>
+      </nav>
+
+      <section class="hero">
+        <p class="eyebrow">Track Practice Day</p>
+        <h1>MTB Gate</h1>
+        <p class="summary">Use the rider metrics dashboard to see today&rsquo;s fastest runs, average reaction times, rider rankings, and the latest attempts from the gates.</p>
+      </section>
+
+      <section class="home-grid">
+        <article class="feature-card">
+          <p class="eyebrow">Rider Stats</p>
+          <h2>Today&rsquo;s Metrics</h2>
+          <p>Open the daily dashboard to review completed runs, best time, reaction averages, rider summary cards, and latest gate activity.</p>
+          <a class="cta" href="./today.html">Open Rider Stats</a>
+        </article>
+
+        <article class="feature-card">
+          <p class="eyebrow">Trackside Workflow</p>
+          <h2>How To Use It</h2>
+          <p>1. Start the local API or deploy the service. 2. Open the rider stats page. 3. Filter by date or rider ID if you want a narrower view.</p>
+          <p class="subtle">Default rider stats URL: <strong>today.html</strong></p>
+        </article>
+
+        <article class="feature-card">
+          <p class="eyebrow">Data Source</p>
+          <h2>API Endpoint</h2>
+          <p>The dashboard reads from the same `/results?date=YYYY-MM-DD` API used by the gate ingest flow, so the page updates as new attempts are uploaded.</p>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

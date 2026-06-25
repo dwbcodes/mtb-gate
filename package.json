@@ -1,0 +1,28 @@
+{
+  "name": "mtb-gate",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/**/*.test.ts",
+    "simulate": "node --experimental-strip-types packages/simulator/src/cli.ts",
+    "api:dev": "node --experimental-strip-types services/api/src/dev-server.ts",
+    "embed:device-ui": "node scripts/embed-device-ui.mjs",
+    "test:device": "playwright test --config tests/device/playwright.config.ts --grep @console",
+    "test:device:console": "playwright test --config tests/device/playwright.config.ts --grep @console",
+    "test:device:api": "playwright test --config tests/device/playwright.config.ts --grep @api",
+    "test:device:ui": "playwright test --config tests/device/playwright.config.ts --grep @ui"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@types/node": "^22.0.0",
+    "serialport": "^13.0.0",
+    "typescript": "^5.0.0"
+  }
+}

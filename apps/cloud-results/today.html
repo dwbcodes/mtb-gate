@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MTB Gate Today&rsquo;s Metrics</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <nav class="topbar">
+        <a class="brand" href="./index.html">MTB Gate</a>
+        <div class="menu">
+          <a class="menu-link" href="./index.html">Home</a>
+          <a class="menu-link is-active" href="./today.html">Today&rsquo;s Metrics</a>
+        </div>
+      </nav>
+
+      <section class="hero">
+        <p class="eyebrow">Today’s Practice Metrics</p>
+        <h1>Rider Stats</h1>
+        <p class="summary">Track today&rsquo;s sessions with quick team metrics, rider rankings, and the latest gate attempts.</p>
+      </section>
+
+      <section class="controls">
+        <label>
+          <span>Date</span>
+          <input id="date" type="date">
+        </label>
+        <label>
+          <span>Rider ID</span>
+          <input id="riderId" type="text" placeholder="Optional rider filter">
+        </label>
+        <button id="load">Load results</button>
+      </section>
+
+      <section class="metrics-grid" id="metrics"></section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Rider Summary</h2>
+          <p id="status">Waiting for query…</p>
+        </div>
+        <div id="summary" class="summary-grid"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Latest Attempts</h2>
+          <p id="attemptMeta">No data loaded</p>
+        </div>
+        <div id="results" class="results"></div>
+      </section>
+    </main>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
