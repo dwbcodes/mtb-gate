@@ -117,14 +117,15 @@ Default USB_MATCH regex: `Espressif|USB JTAG|CDC ACM`; override with `make attac
 6. **Sensor Abstraction**: Pressure sensors (MPXV7002DP) abstracted in `sensor_gate.h` for mocking during dev; dual sensors on start gate (pins 2, 3)
 7. **Offline Ingest**: Runs captured locally; payloads idempotent and uploadable to AWS when network available
 8. **Wi-Fi** (Configuration & Cloud Sync): Each device:
-   - Creates own AP (default SSID `MTBGate-<device-id>`, password `changeme123`)
+   - AP SSID always equals the deviceId (`Gate-<#>-<mac>`); not user-configurable
+   - AP IP is `192.168.4.<gateNumber>` (e.g. gate 1 → 192.168.4.1, gate 12 → 192.168.4.12)
+   - DHCP client hostname set to deviceId so the device is identifiable on router DHCP tables
    - Optionally joins a station network (both configured via device UI)
-   - Configuration page accessible from either network at `http://192.168.4.1/`
-   - Uses Wi-Fi only for admin/configuration and cloud uploads; does not depend on Wi-Fi for timing operations
+   - Uses Wi-Fi only for admin/configuration and cloud uploads; timing operates independently via ESP-Now
 
 ### Firmware Abstractions
 
-- **gate_config.h/cpp**: Persistent NVS storage for AP/station SSID/password, thresholds (line1, line2, finish), Wi-Fi channel, and device label
+- **gate_config.h/cpp**: Persistent NVS storage for AP/station password, thresholds (line1, line2, finish), Wi-Fi channel, gate number, and peer MAC. DeviceId = `Gate-<#>-<mac>` computed from gate number + eFuse MAC; AP SSID always equals deviceId
 - **run_queue.h**: Queue for overlapping runs with deterministic ID generation; supports stampLine2() for dual-sensor timing
 - **rider_store.h/cpp**: Persistent NVS rider registration (32-entry max), keyed by tagId
 - **nfc_reader.h/cpp**: NFC tag reader abstraction (mock in dev, real PN532 I2C in production)
@@ -141,13 +142,17 @@ Default USB_MATCH regex: `Espressif|USB JTAG|CDC ACM`; override with `make attac
 
 ### Device UI
 
-- **Device UI** (`apps/device-ui/`): Captive portal served by start gate on `192.168.4.1`
-  - NFC registration panel: "Tap NFC" button triggers 15-second listen window, on tag detect prompts for display name
-  - Rider roster: shows all registered riders (tagId, display name)
-  - Live countdown display during runs
-  - Recent attempts table with three timing metrics (Reaction, Launch, Course)
-  - Calibration section: thresholds for all three sensors and Wi-Fi channel
-  - Auto-refresh every 2 seconds via `/api/status` polling
+- **Device UI** (`apps/device-ui/`): Captive portal static SPA served by the gate at its AP IP
+  - Side navigation layout with two sections: Monitor (Results, Riders) and Configuration (Network, Gate Config, Reset) and Developer (API Docs, Peer Tools)
+  - Hash-based client-side routing (`#results`, `#riders`, `#config-network`, `#config-gate`, `#config-reset`, `#docs`, `#peer-tools`)
+  - **Results** (home): Recent attempts with 3 timing metrics, network status grid, connected-gates info for non-start gates
+  - **Riders**: NFC registration panel (15s listen window, prompt for display name), registered riders list
+  - **Network**: AP SSID (read-only, always = deviceId), AP password, station SSID/password, Wi-Fi channel
+  - **Gate Config**: Gate number dropdown (1=Start, 2–11=Intermediate, 12=Finish), peer MAC, sensor thresholds
+  - **Reset**: Reboot, factory reset, clear riders, download config JSON
+  - **API Docs**: Documentation links, quick API test buttons
+  - **Peer Tools**: Send GET/POST/PUT/DELETE to peer gate URLs (requires both devices reachable from browser); quick-action buttons pre-populate the form
+  - Built via `npm run embed:device-ui` → `firmware/shared/include/device_ui.h`; `make build` and `make upload` run this automatically
 
 ### Testing
 
@@ -181,9 +186,9 @@ Serial commands (type in monitor):
 ### Device Configuration
 
 After flashing:
-1. Connect phone/laptop to `MTBGate-<device-id>` AP
-2. Open `http://192.168.4.1/`
-3. Set thresholds (line1, line2, finish), AP/station credentials, and Wi-Fi channel
+1. Connect phone/laptop to the gate's AP (SSID = `Gate-<#>-<mac>`, default password `changeme123`)
+2. Open `http://192.168.4.<gateNumber>/` (default: `http://192.168.4.1/`)
+3. Use **Gate Config** to set gate number and peer MAC; **Network** to set AP password and station credentials
 4. Changes persist to NVS
 
 ## Key Technical Details

@@ -3,217 +3,329 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>MTB Gate Device Dashboard</title>
+    <title>MTB Gate</title>
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
-    <main class="frame">
-      <section class="headline">
-        <p class="kicker">MTB Gate Control Panel</p>
-        <h1 id="deviceLabel">Gate Control</h1>
-        <p id="deviceRole">Configuration and monitoring</p>
-      </section>
+    <div class="app-shell">
 
-      <nav class="tabs">
-        <button class="tab-btn active" data-tab="riders">Riders</button>
-        <button class="tab-btn" data-tab="results">Results</button>
-        <button class="tab-btn" data-tab="network">Network</button>
-        <button class="tab-btn" data-tab="docs">Documents</button>
-        <button class="tab-btn" data-tab="reset">Reset</button>
-      </nav>
-
-      <!-- RIDERS TAB -->
-      <div id="riders-tab" class="tab-content active">
-        <section class="card">
-          <div class="section-head">
-            <h2>Rider Registration</h2>
-            <button id="tapNfc" class="btn-primary">📱 Tap NFC</button>
+      <aside>
+        <a href="#results" class="brand" data-page="results">
+          MTB Gate
+          <small id="navDeviceId">Loading...</small>
+        </a>
+        <div class="nav-groups">
+          <div class="nav-group">
+            <div class="nav-heading">Monitor</div>
+            <a href="#results" class="nav-link active" data-page="results">Results</a>
+            <a href="#riders" class="nav-link" data-page="riders">Riders</a>
           </div>
-          <p style="color: var(--muted); font-size: 0.9em; margin-bottom: 16px;">Tap a new NFC tag to register a rider for the day</p>
-          <p id="nfcStatus" style="color: var(--accent); font-size: 0.85em; font-weight: 600;">Ready</p>
-        </section>
-
-        <section class="card">
-          <div class="section-head">
-            <h2>Registered Riders</h2>
-            <button id="refreshRiders">Refresh</button>
+          <div class="nav-group">
+            <div class="nav-heading">Configuration</div>
+            <a href="#config-network" class="nav-link" data-page="config-network">Network</a>
+            <a href="#config-gate" class="nav-link" data-page="config-gate">Gate Config</a>
+            <a href="#config-reset" class="nav-link" data-page="config-reset">Reset</a>
           </div>
-          <div id="rosterList" class="roster"></div>
-        </section>
-      </div>
-
-      <!-- RESULTS TAB -->
-      <div id="results-tab" class="tab-content">
-        <section class="card">
-          <div class="section-head">
-            <h2>Recent Attempts</h2>
-            <button id="refreshResults">Refresh</button>
+          <div class="nav-group">
+            <div class="nav-heading">Developer</div>
+            <a href="#docs" class="nav-link" data-page="docs">API Docs</a>
+            <a href="#peer-tools" class="nav-link" data-page="peer-tools">Peer Tools</a>
           </div>
-          <div id="attempts" class="attempts"></div>
-        </section>
-      </div>
+        </div>
+      </aside>
 
-      <!-- NETWORK TAB -->
-      <div id="network-tab" class="tab-content">
-        <section class="card">
-          <h2>Network Status</h2>
-          <div class="status-grid">
-            <div class="status-item">
-              <span>Device ID</span>
-              <strong id="statusDeviceId">—</strong>
-            </div>
-            <div class="status-item">
-              <span>Device MAC</span>
-              <strong id="statusMac">—</strong>
-            </div>
-            <div class="status-item">
-              <span>AP SSID</span>
-              <strong id="statusApSsid">—</strong>
-            </div>
-            <div class="status-item">
-              <span>AP IP</span>
-              <strong id="statusApIp">—</strong>
-            </div>
-            <div class="status-item">
-              <span>Station Network</span>
-              <strong id="statusStaSsid">—</strong>
-            </div>
-            <div class="status-item">
-              <span>Station IP</span>
-              <strong id="statusStaIp">—</strong>
-            </div>
-            <div class="status-item">
-              <span>ESP-Now Peer</span>
-              <strong id="statusPeerMac">—</strong>
-            </div>
-            <div class="status-item">
-              <span>Peer Connected</span>
-              <strong id="statusConnected">—</strong>
-            </div>
-          </div>
-        </section>
+      <main>
 
-        <section class="card">
-          <h2>Wi-Fi Configuration</h2>
-          <label>
-            <span>Access Point Password (8+ chars or empty)</span>
-            <input type="password" id="apPassword" placeholder="••••••••">
-          </label>
-          <label>
-            <span>Station Network SSID (optional)</span>
-            <input type="text" id="staSsid" placeholder="Leave empty to skip">
-          </label>
-          <label>
-            <span>Station Password (if joining network)</span>
-            <input type="password" id="staPassword" placeholder="••••••••">
-          </label>
-          <label>
-            <span>Wi-Fi Channel (1-13)</span>
-            <input type="number" min="1" max="13" id="wifiChannel" value="1">
-          </label>
-          <button class="btn-save" id="saveWifiConfig">Save Wi-Fi Settings</button>
-          <p id="wifiMessage" style="font-size: 0.85em; margin-top: 8px; color: var(--accent);"></p>
-        </section>
+        <!-- RESULTS PAGE -->
+        <div id="page-results" class="page active">
+          <section class="headline">
+            <p class="kicker">MTB Gate Control Panel</p>
+            <h1 id="deviceLabel">Gate Control</h1>
+            <p id="deviceRole">Configuration and monitoring</p>
+          </section>
 
-        <section class="card">
-          <h2>Sensor Calibration</h2>
-          <label>
-            <span>Start Sensor Threshold (0.00–2.00 V)</span>
-            <div class="slider-display">
-              <input type="range" min="0" max="2" step="0.01" id="startThreshold" value="0.85">
-              <output id="startThresholdValue">0.85</output>
+          <section class="card">
+            <div class="section-head">
+              <h2>Recent Attempts</h2>
+              <button id="refreshResults" class="btn-secondary">Refresh</button>
             </div>
-          </label>
-          <label>
-            <span>Line 2 Sensor Threshold (0.00–2.00 V)</span>
-            <div class="slider-display">
-              <input type="range" min="0" max="2" step="0.01" id="line2Threshold" value="0.85">
-              <output id="line2ThresholdValue">0.85</output>
+            <div id="attempts" class="attempts"></div>
+          </section>
+
+          <section class="card">
+            <h2>Network Status</h2>
+            <div class="status-grid">
+              <div class="status-item">
+                <span>Device ID</span>
+                <strong id="statusDeviceId">—</strong>
+              </div>
+              <div class="status-item">
+                <span>Device MAC</span>
+                <strong id="statusMac">—</strong>
+              </div>
+              <div class="status-item">
+                <span>AP SSID</span>
+                <strong id="statusApSsid">—</strong>
+              </div>
+              <div class="status-item">
+                <span>AP IP</span>
+                <strong id="statusApIp">—</strong>
+              </div>
+              <div class="status-item">
+                <span>Station Network</span>
+                <strong id="statusStaSsid">—</strong>
+              </div>
+              <div class="status-item">
+                <span>Station IP</span>
+                <strong id="statusStaIp">—</strong>
+              </div>
+              <div class="status-item">
+                <span>ESP-Now Peer</span>
+                <strong id="statusPeerMac">—</strong>
+              </div>
+              <div class="status-item">
+                <span>Peer Connected</span>
+                <strong id="statusConnected">—</strong>
+              </div>
             </div>
-          </label>
-          <label>
-            <span>Finish Sensor Threshold (0.00–2.00 V)</span>
-            <div class="slider-display">
-              <input type="range" min="0" max="2" step="0.01" id="finishThreshold" value="0.85">
-              <output id="finishThresholdValue">0.85</output>
+          </section>
+
+          <section class="card" id="sectionConnectedGates" style="display:none;">
+            <h2>Connected Gates</h2>
+            <div class="status-grid">
+              <div class="status-item">
+                <span>Start Gate MAC</span>
+                <strong id="connectedStartMac">—</strong>
+              </div>
             </div>
-          </label>
-          <button class="btn-save" id="saveSensorConfig">Save Sensor Settings</button>
-          <p id="sensorMessage" style="font-size: 0.85em; margin-top: 8px; color: var(--accent);"></p>
-        </section>
+            <p style="color: var(--muted); font-size: 0.85em; margin-top: 12px;">
+              This gate is coordinated by the Start Gate. Connect to the Start Gate to change configuration.
+            </p>
+          </section>
+        </div>
 
-        <section class="card">
-          <h2>Peer Configuration</h2>
-          <label>
-            <span>Peer MAC Address (AA:BB:CC:DD:EE:FF or empty)</span>
-            <input type="text" id="peerMac" placeholder="Leave empty for auto-discover" pattern="^([0-9a-fA-F]{2}:){5}([0-9a-fA-F]{2})$|^$">
-          </label>
-          <label>
-            <span>Gate Number (0 = start, 1 = finish, etc.)</span>
-            <input type="number" id="gateNumber" min="1" max="255" step="1" value="1">
-          </label>
-          <label>
-            <span>Device Label</span>
-            <input type="text" id="peerDeviceLabel" placeholder="e.g., Start Gate">
-          </label>
-          <button class="btn-save" id="savePeerConfig">Save Peer Settings</button>
-          <p id="peerMessage" style="font-size: 0.85em; margin-top: 8px; color: var(--accent);"></p>
-        </section>
-      </div>
+        <!-- RIDERS PAGE -->
+        <div id="page-riders" class="page">
+          <section class="card">
+            <div class="section-head">
+              <h2>Rider Registration</h2>
+              <button id="tapNfc" class="btn-primary">📱 Tap NFC</button>
+            </div>
+            <p style="color: var(--muted); font-size: 0.9em; margin-bottom: 12px;">
+              Tap a new NFC tag to register a rider for the day
+            </p>
+            <p id="nfcStatus" style="color: var(--accent); font-size: 0.85em; font-weight: 600;">Ready</p>
+          </section>
 
-      <!-- DOCUMENTS TAB -->
-      <div id="docs-tab" class="tab-content">
-        <section class="card">
-          <h2>API Documentation</h2>
-          <p style="color: var(--muted); margin-bottom: 16px;">Complete REST API documentation for device control and integration.</p>
-          <div class="doc-links">
-            <a href="/docs/API.md" target="_blank" class="doc-link">📖 API Overview</a>
-            <a href="/docs/openapi.yaml" target="_blank" class="doc-link">📋 OpenAPI Spec (YAML)</a>
-            <a href="/docs/openapi.json" target="_blank" class="doc-link">📋 OpenAPI Spec (JSON)</a>
-            <a href="/docs/CURL_EXAMPLES.md" target="_blank" class="doc-link">💻 curl Examples</a>
-            <a href="/docs/API_STATUS.md" target="_blank" class="doc-link">📊 Status Endpoint</a>
-            <a href="/docs/API_RIDERS.md" target="_blank" class="doc-link">👥 Riders Endpoint</a>
-          </div>
-        </section>
+          <section class="card">
+            <div class="section-head">
+              <h2>Registered Riders</h2>
+              <button id="refreshRiders" class="btn-secondary">Refresh</button>
+            </div>
+            <div id="rosterList" class="roster"></div>
+          </section>
+        </div>
 
-        <section class="card">
-          <h2>Quick API Tests</h2>
-          <button id="testStatus" class="btn-test">Test /api/status</button>
-          <button id="testRiders" class="btn-test">Test /api/riders</button>
-          <button id="testPing" class="btn-test">Test /api/ping</button>
-          <pre id="apiTestResult" style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 0.85em; display: none; margin-top: 12px;"></pre>
-        </section>
-      </div>
+        <!-- NETWORK CONFIG PAGE -->
+        <div id="page-config-network" class="page">
+          <section class="card">
+            <h2>Wi-Fi Configuration</h2>
+            <label>
+              <span>Access Point SSID (auto — equals Device ID)</span>
+              <input type="text" id="apSsid" readonly>
+            </label>
+            <label>
+              <span>Access Point Password (8+ chars, or empty for open)</span>
+              <input type="password" id="apPassword" placeholder="••••••••">
+            </label>
+            <label>
+              <span>Station Network SSID (optional)</span>
+              <input type="text" id="staSsid" placeholder="Leave empty to skip">
+            </label>
+            <label>
+              <span>Station Password</span>
+              <input type="password" id="staPassword" placeholder="••••••••">
+            </label>
+            <label>
+              <span>Wi-Fi Channel (1–13)</span>
+              <input type="number" min="1" max="13" id="wifiChannel" value="1">
+            </label>
+            <button class="btn-save" id="saveWifiConfig">Save Wi-Fi Settings</button>
+            <p id="wifiMessage" style="font-size: 0.85em; margin-top: 8px; color: var(--accent);"></p>
+          </section>
+        </div>
 
-      <!-- RESET TAB -->
-      <div id="reset-tab" class="tab-content">
-        <section class="card">
-          <h2>Device Management</h2>
-          <p style="color: var(--muted); margin-bottom: 20px;">Caution: These actions affect device operation.</p>
+        <!-- GATE CONFIG PAGE -->
+        <div id="page-config-gate" class="page">
+          <section class="card" id="sectionDeviceIdentity">
+            <h2>Device Configuration</h2>
+            <label>
+              <span>Gate Number</span>
+              <select id="gateNumber">
+                <option value="1">1 — Start</option>
+                <option value="2">2 — Intermediate</option>
+                <option value="3">3 — Intermediate</option>
+                <option value="4">4 — Intermediate</option>
+                <option value="5">5 — Intermediate</option>
+                <option value="6">6 — Intermediate</option>
+                <option value="7">7 — Intermediate</option>
+                <option value="8">8 — Intermediate</option>
+                <option value="9">9 — Intermediate</option>
+                <option value="10">10 — Intermediate</option>
+                <option value="11">11 — Intermediate</option>
+                <option value="12">12 — Finish</option>
+              </select>
+            </label>
+            <label>
+              <span>Peer MAC Address (AA:BB:CC:DD:EE:FF or empty for auto-discover)</span>
+              <input type="text" id="peerMac" placeholder="Leave empty for auto-discover"
+                pattern="^([0-9a-fA-F]{2}:){5}([0-9a-fA-F]{2})$|^$">
+            </label>
+            <button class="btn-save" id="savePeerConfig">Save Gate Settings</button>
+            <p id="peerMessage" style="font-size: 0.85em; margin-top: 8px; color: var(--accent);"></p>
+          </section>
 
-          <div class="danger-actions">
-            <button id="rebootBtn" class="btn-danger">🔄 Reboot Device</button>
-            <p style="font-size: 0.85em; color: var(--muted); margin: 8px 0;">Restart the device. All settings preserved.</p>
-          </div>
+          <section class="card">
+            <h2>Sensor Calibration</h2>
+            <label>
+              <span>Start Sensor Threshold (0.00–2.00 V)</span>
+              <div class="slider-display">
+                <input type="range" min="0" max="2" step="0.01" id="startThreshold" value="0.85">
+                <output id="startThresholdValue">0.85</output>
+              </div>
+            </label>
+            <label>
+              <span>Line 2 Sensor Threshold (0.00–2.00 V)</span>
+              <div class="slider-display">
+                <input type="range" min="0" max="2" step="0.01" id="line2Threshold" value="0.85">
+                <output id="line2ThresholdValue">0.85</output>
+              </div>
+            </label>
+            <label>
+              <span>Finish Sensor Threshold (0.00–2.00 V)</span>
+              <div class="slider-display">
+                <input type="range" min="0" max="2" step="0.01" id="finishThreshold" value="0.85">
+                <output id="finishThresholdValue">0.85</output>
+              </div>
+            </label>
+            <button class="btn-save" id="saveSensorConfig">Save Sensor Settings</button>
+            <p id="sensorMessage" style="font-size: 0.85em; margin-top: 8px; color: var(--accent);"></p>
+          </section>
+        </div>
 
-          <div class="danger-actions">
-            <button id="factoryResetBtn" class="btn-danger btn-critical">⚠️ Factory Reset</button>
-            <p style="font-size: 0.85em; color: var(--muted); margin: 8px 0;">Erase all configuration and riders. Cannot be undone.</p>
-          </div>
+        <!-- RESET PAGE -->
+        <div id="page-config-reset" class="page">
+          <section class="card">
+            <h2>Device Management</h2>
+            <p style="color: var(--muted); margin-bottom: 16px;">Caution: these actions affect device operation.</p>
 
-          <div class="danger-actions">
-            <button id="clearRidersBtn" class="btn-danger">🗑️ Clear All Riders</button>
-            <p style="font-size: 0.85em; color: var(--muted); margin: 8px 0;">Delete all registered riders. Keep settings.</p>
-          </div>
-        </section>
+            <div class="danger-actions">
+              <button id="rebootBtn" class="btn-danger">🔄 Reboot Device</button>
+              <p style="font-size: 0.85em; color: var(--muted); margin: 8px 0 0;">Restart the device. All settings preserved.</p>
+            </div>
 
-        <section class="card">
-          <h2>Advanced</h2>
-          <button id="downloadConfig" class="btn-test">📥 Download Config (JSON)</button>
-          <p style="font-size: 0.85em; color: var(--muted); margin-top: 8px;">Export current configuration for backup or sharing.</p>
-        </section>
-      </div>
-    </main>
+            <div class="danger-actions">
+              <button id="factoryResetBtn" class="btn-danger btn-critical">⚠️ Factory Reset</button>
+              <p style="font-size: 0.85em; color: var(--muted); margin: 8px 0 0;">Erase all configuration and riders. Cannot be undone.</p>
+            </div>
+
+            <div class="danger-actions">
+              <button id="clearRidersBtn" class="btn-danger">🗑️ Clear All Riders</button>
+              <p style="font-size: 0.85em; color: var(--muted); margin: 8px 0 0;">Delete all registered riders. Settings preserved.</p>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2>Backup</h2>
+            <button id="downloadConfig" class="btn-test">📥 Download Config (JSON)</button>
+            <p style="font-size: 0.85em; color: var(--muted); margin-top: 8px;">Export current configuration for backup or sharing.</p>
+          </section>
+        </div>
+
+        <!-- API DOCS PAGE -->
+        <div id="page-docs" class="page">
+          <section class="card">
+            <h2>API Documentation</h2>
+            <p style="color: var(--muted); margin-bottom: 4px;">Complete REST API reference for device control and integration.</p>
+            <div class="doc-links">
+              <a href="/docs/API.md" target="_blank" class="doc-link">📖 API Overview</a>
+              <a href="/docs/openapi.yaml" target="_blank" class="doc-link">📋 OpenAPI (YAML)</a>
+              <a href="/docs/openapi.json" target="_blank" class="doc-link">📋 OpenAPI (JSON)</a>
+              <a href="/docs/CURL_EXAMPLES.md" target="_blank" class="doc-link">💻 curl Examples</a>
+              <a href="/docs/API_STATUS.md" target="_blank" class="doc-link">📊 Status Endpoint</a>
+              <a href="/docs/API_RIDERS.md" target="_blank" class="doc-link">👥 Riders Endpoint</a>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2>Quick API Tests</h2>
+            <p style="color: var(--muted); font-size: 0.88em; margin-bottom: 12px;">Test this device's endpoints directly.</p>
+            <button id="testStatus" class="btn-test">GET /api/status</button>
+            <button id="testRiders" class="btn-test">GET /api/riders</button>
+            <button id="testPing" class="btn-test">POST /api/ping</button>
+            <pre id="apiTestResult" style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px;
+              overflow-x: auto; font-size: 0.82em; display: none; margin-top: 12px; white-space: pre-wrap;
+              word-break: break-all;"></pre>
+          </section>
+        </div>
+
+        <!-- PEER TOOLS PAGE -->
+        <div id="page-peer-tools" class="page">
+          <section class="card">
+            <h2>Send Request to Peer Gate</h2>
+            <p style="color: var(--muted); font-size: 0.88em; margin-bottom: 4px;">
+              Send HTTP requests to other gates. Both devices must be reachable from your browser
+              (e.g. both on the same station network, or use the AP IP: gate 2 = 192.168.4.2).
+            </p>
+
+            <div class="peer-row">
+              <label>
+                <span>Method</span>
+                <select id="peerMethod">
+                  <option value="GET">GET</option>
+                  <option value="POST">POST</option>
+                  <option value="PUT">PUT</option>
+                  <option value="DELETE">DELETE</option>
+                </select>
+              </label>
+              <label>
+                <span>Target URL</span>
+                <input type="url" id="peerUrl" placeholder="http://192.168.4.2/api/status">
+              </label>
+            </div>
+
+            <label>
+              <span>Request Body (JSON, for POST/PUT)</span>
+              <textarea id="peerBody" rows="4" placeholder='{"key": "value"}'
+                style="resize: vertical;"></textarea>
+            </label>
+
+            <button id="sendPeerRequest" class="btn-test" style="margin-top: 16px;">Send Request</button>
+            <pre id="peerResult" style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px;
+              overflow-x: auto; font-size: 0.82em; display: none; margin-top: 12px; white-space: pre-wrap;
+              word-break: break-all;"></pre>
+          </section>
+
+          <section class="card">
+            <h2>Quick Actions</h2>
+            <p style="color: var(--muted); font-size: 0.88em; margin-bottom: 4px;">
+              Pre-built requests — click to populate the form above, then adjust the URL and send.
+            </p>
+            <div class="quick-action-grid">
+              <button class="btn-secondary" onclick="fillPeerForm('GET', '/api/status', '')">GET status</button>
+              <button class="btn-secondary" onclick="fillPeerForm('GET', '/api/riders', '')">GET riders</button>
+              <button class="btn-secondary" onclick="fillPeerForm('POST', '/api/ping', '')">POST ping</button>
+              <button class="btn-secondary" onclick="fillPeerForm('GET', '/api/config', '')">GET config</button>
+              <button class="btn-secondary"
+                onclick="fillPeerForm('PUT', '/api/config/mac', JSON.stringify({gateNumber: 12, peerMac: ''}, null, 2))">
+                PUT gate config
+              </button>
+            </div>
+          </section>
+        </div>
+
+      </main>
+    </div>
     <script defer src="./main.js"></script>
   </body>
 </html>

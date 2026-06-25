@@ -1,161 +1,62 @@
-// TAB NAVIGATION
-document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', (e) => {
-    const tabName = e.target.dataset.tab;
+// PAGE NAVIGATION (hash-based)
+const PAGES = ['results', 'riders', 'config-network', 'config-gate', 'config-reset', 'docs', 'peer-tools'];
 
-    // Hide all tabs
-    document.querySelectorAll('.tab-content').forEach(tab => {
-      tab.classList.remove('active');
-    });
-    document.querySelectorAll('.tab-btn').forEach(b => {
-      b.classList.remove('active');
-    });
+function navigateTo(page) {
+  if (!PAGES.includes(page)) page = 'results';
 
-    // Show selected tab
-    document.getElementById(tabName + '-tab').classList.add('active');
-    e.target.classList.add('active');
+  PAGES.forEach(p => {
+    const el = document.getElementById('page-' + p);
+    if (el) el.classList.toggle('active', p === page);
+  });
+
+  document.querySelectorAll('.nav-link').forEach(link => {
+    link.classList.toggle('active', link.dataset.page === page);
+  });
+}
+
+window.addEventListener('hashchange', () => {
+  navigateTo(window.location.hash.slice(1));
+});
+
+document.querySelectorAll('.nav-link, .brand').forEach(link => {
+  link.addEventListener('click', (e) => {
+    const page = link.dataset.page;
+    if (page) {
+      e.preventDefault();
+      window.location.hash = page;
+      navigateTo(page);
+    }
   });
 });
 
-// RIDERS TAB
-async function loadRiders() {
-  try {
-    const response = await fetch('/api/riders');
-    const riders = await response.json();
-    renderRidersList(riders);
-  } catch (err) {
-    console.error('Failed to load riders:', err);
-  }
-}
-
-function renderRidersList(riders) {
-  const list = document.querySelector("#rosterList");
-  list.innerHTML = "";
-  if (riders.length === 0) {
-    const p = document.createElement("p");
-    p.style.color = "var(--muted)";
-    p.textContent = "No riders registered yet";
-    list.appendChild(p);
-    return;
-  }
-  for (const rider of riders) {
-    const item = document.createElement("div");
-    item.className = "roster-item";
-    const inner = document.createElement("div");
-    inner.style.flex = "1";
-    const name = document.createElement("strong");
-    name.textContent = rider.displayName;
-    const id = document.createElement("div");
-    id.style.cssText = "font-family: monospace; font-size: 0.85em; color: var(--muted); margin-top: 4px;";
-    id.textContent = "ID: " + rider.tagId;
-    inner.appendChild(name);
-    inner.appendChild(id);
-    item.appendChild(inner);
-    list.appendChild(item);
-  }
-}
-
-async function startNfcListen() {
-  const btn = document.getElementById("tapNfc");
-  const statusEl = document.getElementById("nfcStatus");
-
-  btn.disabled = true;
-  btn.textContent = "Listening for 15s...";
-  statusEl.textContent = "Hold card near device...";
-
-  try {
-    // Tell device to start listening for NFC tags
-    const listenResponse = await fetch('/api/nfc/listen', { method: 'POST' });
-    if (!listenResponse.ok) {
-      const errorData = await listenResponse.json().catch(() => ({}));
-      throw new Error(errorData.error || `Failed to start NFC listening (${listenResponse.status})`);
-    }
-
-    // Poll for scanned tag
-    let tagId = null;
-    const pollInterval = setInterval(async () => {
-      try {
-        const response = await fetch('/api/nfc/tag');
-        const data = await response.json();
-        if (data.ok && data.tagId) {
-          tagId = data.tagId;
-          clearInterval(pollInterval);
-          btn.disabled = false;
-          btn.textContent = "📱 Tap NFC";
-          statusEl.textContent = "Card detected!";
-          
-          // Prompt for rider name only
-          const displayName = prompt('Enter rider name for this card:');
-          if (displayName && displayName.trim()) {
-            registerRider(displayName.trim(), tagId);
-            statusEl.textContent = "✓ Rider registered";
-          } else {
-            statusEl.textContent = "Cancelled";
-          }
-        }
-      } catch (err) {
-        console.error('Error checking for NFC tag:', err);
-      }
-    }, 500);
-
-    // Stop listening after 15 seconds
-    setTimeout(() => {
-      clearInterval(pollInterval);
-      btn.disabled = false;
-      btn.textContent = "📱 Tap NFC";
-      if (!tagId) {
-        statusEl.textContent = "No card detected";
-      }
-    }, 15000);
-  } catch (err) {
-    console.error('Failed to start NFC listen:', err);
-    btn.disabled = false;
-    btn.textContent = "📱 Tap NFC";
-    statusEl.textContent = "Error: " + err.message;
-  }
-}
-
-async function registerRider(displayName, tagId) {
-  try {
-    const response = await fetch('/api/riders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tagId, displayName })
-    });
-
-    if (response.ok) {
-      document.getElementById("nfcStatus").textContent = `✓ Registered: ${displayName}`;
-      loadRiders();
-    } else {
-      const error = await response.json();
-      document.getElementById("nfcStatus").textContent = `Error: ${error.error}`;
-    }
-  } catch (err) {
-    console.error('Failed to register rider:', err);
-    document.getElementById("nfcStatus").textContent = "Error registering rider";
-  }
-}
-
-// RESULTS TAB
+// RESULTS PAGE
 async function loadStatus() {
   try {
     const response = await fetch('/api/status');
     const status = await response.json();
 
-    // Update headline
-    document.getElementById("deviceLabel").textContent = status.deviceLabel || "Gate Control";
-    document.getElementById("deviceRole").textContent = `${status.role || 'unknown'} gate`;
+    document.getElementById('deviceLabel').textContent = status.deviceLabel || 'Gate Control';
+    document.getElementById('deviceRole').textContent = (status.role || 'unknown') + ' gate';
 
-    // Update network status
-    document.getElementById("statusDeviceId").textContent = status.deviceId;
-    document.getElementById("statusMac").textContent = status.mac;
-    document.getElementById("statusApSsid").textContent = status.apSsid;
-    document.getElementById("statusApIp").textContent = status.apIp;
-    document.getElementById("statusStaSsid").textContent = status.staSsid || "Not configured";
-    document.getElementById("statusStaIp").textContent = status.staIp;
+    document.getElementById('statusDeviceId').textContent = status.deviceId;
+    document.getElementById('statusMac').textContent = status.mac;
+    document.getElementById('statusApSsid').textContent = status.apSsid;
+    document.getElementById('statusApIp').textContent = status.apIp;
+    document.getElementById('statusStaSsid').textContent = status.staSsid || 'Not configured';
+    document.getElementById('statusStaIp').textContent = status.staIp;
+
     const espNow = status.espNow || {};
-    document.getElementById("statusPeerMac").textContent = espNow.peerMac || "Not configured";
-    document.getElementById("statusConnected").textContent = espNow.connected ? "✓ Yes" : "✗ No";
+    document.getElementById('statusPeerMac').textContent = espNow.peerMac || 'Not configured';
+    document.getElementById('statusConnected').textContent = espNow.connected ? '✓ Yes' : '✗ No';
+
+    const navId = document.getElementById('navDeviceId');
+    if (navId) navId.textContent = status.deviceId || '';
+
+    const isStart = status.role === 'start';
+    document.getElementById('sectionConnectedGates').style.display = isStart ? 'none' : '';
+    if (!isStart) {
+      document.getElementById('connectedStartMac').textContent = espNow.peerMac || 'Not yet discovered';
+    }
 
     renderAttempts(status.queue || []);
   } catch (err) {
@@ -164,35 +65,37 @@ async function loadStatus() {
 }
 
 function renderAttempts(attempts) {
-  const container = document.querySelector("#attempts");
-  container.innerHTML = "";
+  const container = document.getElementById('attempts');
+  container.innerHTML = '';
+
   if (attempts.length === 0) {
-    const p = document.createElement("p");
-    p.style.cssText = "color: var(--muted); padding: 20px 0; text-align: center;";
-    p.textContent = "No attempts yet";
+    const p = document.createElement('p');
+    p.style.cssText = 'color: var(--muted); padding: 20px 0; text-align: center;';
+    p.textContent = 'No attempts yet';
     container.appendChild(p);
     return;
   }
-  for (const attempt of attempts) {
-    const article = document.createElement("article");
-    article.className = "attempt";
 
-    const info = document.createElement("div");
-    const h3 = document.createElement("h3");
+  for (const attempt of attempts) {
+    const article = document.createElement('article');
+    article.className = 'attempt';
+
+    const info = document.createElement('div');
+    const h3 = document.createElement('h3');
     h3.textContent = attempt.riderName || attempt.riderId;
-    const statusP = document.createElement("p");
+    const statusP = document.createElement('p');
     statusP.textContent = attempt.status;
     info.appendChild(h3);
     info.appendChild(statusP);
 
     const metrics = attempt.metrics || {};
-    const metricsDiv = document.createElement("div");
-    metricsDiv.className = "metrics";
-    for (const [label, value] of [["Reaction", metrics.reactionMs], ["Launch", metrics.launchMs], ["Course", metrics.courseMs]]) {
-      const cell = document.createElement("div");
-      const span = document.createElement("span");
+    const metricsDiv = document.createElement('div');
+    metricsDiv.className = 'metrics';
+    for (const [label, value] of [['Reaction', metrics.reactionMs], ['Launch', metrics.launchMs], ['Course', metrics.courseMs]]) {
+      const cell = document.createElement('div');
+      const span = document.createElement('span');
       span.textContent = label;
-      const strong = document.createElement("strong");
+      const strong = document.createElement('strong');
       strong.textContent = formatMs(value);
       cell.appendChild(span);
       cell.appendChild(strong);
@@ -206,24 +109,145 @@ function renderAttempts(attempts) {
 }
 
 function formatMs(value) {
-  if (value == null) return "Pending";
-  return `${(value / 1000).toFixed(3)}s`;
+  if (value == null) return 'Pending';
+  return (value / 1000).toFixed(3) + 's';
 }
 
-// NETWORK TAB - Wi-Fi Config
+// RIDERS PAGE
+async function loadRiders() {
+  try {
+    const response = await fetch('/api/riders');
+    const riders = await response.json();
+    renderRidersList(riders);
+  } catch (err) {
+    console.error('Failed to load riders:', err);
+  }
+}
+
+function renderRidersList(riders) {
+  const list = document.getElementById('rosterList');
+  list.innerHTML = '';
+
+  if (riders.length === 0) {
+    const p = document.createElement('p');
+    p.style.color = 'var(--muted)';
+    p.textContent = 'No riders registered yet';
+    list.appendChild(p);
+    return;
+  }
+
+  for (const rider of riders) {
+    const item = document.createElement('div');
+    item.className = 'roster-item';
+
+    const inner = document.createElement('div');
+    inner.style.flex = '1';
+
+    const name = document.createElement('strong');
+    name.textContent = rider.displayName;
+
+    const id = document.createElement('span');
+    id.textContent = 'ID: ' + rider.tagId;
+
+    inner.appendChild(name);
+    inner.appendChild(document.createElement('br'));
+    inner.appendChild(id);
+    item.appendChild(inner);
+    list.appendChild(item);
+  }
+}
+
+async function startNfcListen() {
+  const btn = document.getElementById('tapNfc');
+  const statusEl = document.getElementById('nfcStatus');
+
+  btn.disabled = true;
+  btn.textContent = 'Listening for 15s...';
+  statusEl.textContent = 'Hold card near device...';
+
+  try {
+    const listenResponse = await fetch('/api/nfc/listen', { method: 'POST' });
+    if (!listenResponse.ok) {
+      const errorData = await listenResponse.json().catch(() => ({}));
+      throw new Error(errorData.error || `Failed to start NFC listening (${listenResponse.status})`);
+    }
+
+    let tagId = null;
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await fetch('/api/nfc/tag');
+        const data = await response.json();
+        if (data.ok && data.tagId) {
+          tagId = data.tagId;
+          clearInterval(pollInterval);
+          btn.disabled = false;
+          btn.textContent = '📱 Tap NFC';
+          statusEl.textContent = 'Card detected!';
+
+          const displayName = prompt('Enter rider name for this card:');
+          if (displayName && displayName.trim()) {
+            registerRider(displayName.trim(), tagId);
+            statusEl.textContent = '✓ Rider registered';
+          } else {
+            statusEl.textContent = 'Cancelled';
+          }
+        }
+      } catch (err) {
+        console.error('Error checking for NFC tag:', err);
+      }
+    }, 500);
+
+    setTimeout(() => {
+      clearInterval(pollInterval);
+      btn.disabled = false;
+      btn.textContent = '📱 Tap NFC';
+      if (!tagId) {
+        statusEl.textContent = 'No card detected';
+      }
+    }, 15000);
+  } catch (err) {
+    console.error('Failed to start NFC listen:', err);
+    btn.disabled = false;
+    btn.textContent = '📱 Tap NFC';
+    statusEl.textContent = 'Error: ' + err.message;
+  }
+}
+
+async function registerRider(displayName, tagId) {
+  try {
+    const response = await fetch('/api/riders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tagId, displayName })
+    });
+
+    if (response.ok) {
+      document.getElementById('nfcStatus').textContent = '✓ Registered: ' + displayName;
+      loadRiders();
+    } else {
+      const error = await response.json();
+      document.getElementById('nfcStatus').textContent = 'Error: ' + error.error;
+    }
+  } catch (err) {
+    console.error('Failed to register rider:', err);
+    document.getElementById('nfcStatus').textContent = 'Error registering rider';
+  }
+}
+
+// NETWORK CONFIG PAGE
 async function loadNetworkConfig() {
   try {
     const response = await fetch('/api/config');
     const config = await response.json();
 
-    document.getElementById("staSsid").value = config.staSsid || "";
-    document.getElementById("wifiChannel").value = config.wifiChannel || 1;
-    document.getElementById("startThreshold").value = config.startThreshold || 0.85;
-    document.getElementById("line2Threshold").value = config.line2Threshold || 0.85;
-    document.getElementById("finishThreshold").value = config.finishThreshold || 0.85;
-    document.getElementById("peerMac").value = config.peerMac || "";
-    document.getElementById("gateNumber").value = config.gateNumber ?? 1;
-    document.getElementById("peerDeviceLabel").value = config.deviceLabel || "";
+    document.getElementById('apSsid').value = config.deviceId || '';
+    document.getElementById('staSsid').value = config.staSsid || '';
+    document.getElementById('wifiChannel').value = config.wifiChannel || 1;
+    document.getElementById('startThreshold').value = config.startThreshold || 0.85;
+    document.getElementById('line2Threshold').value = config.line2Threshold || 0.85;
+    document.getElementById('finishThreshold').value = config.finishThreshold || 0.85;
+    document.getElementById('peerMac').value = config.peerMac || '';
+    document.getElementById('gateNumber').value = String(config.gateNumber ?? 1);
 
     updateSliderValues();
   } catch (err) {
@@ -232,20 +256,20 @@ async function loadNetworkConfig() {
 }
 
 function updateSliderValues() {
-  document.getElementById("startThresholdValue").textContent =
-    document.getElementById("startThreshold").value;
-  document.getElementById("line2ThresholdValue").textContent =
-    document.getElementById("line2Threshold").value;
-  document.getElementById("finishThresholdValue").textContent =
-    document.getElementById("finishThreshold").value;
+  document.getElementById('startThresholdValue').textContent =
+    document.getElementById('startThreshold').value;
+  document.getElementById('line2ThresholdValue').textContent =
+    document.getElementById('line2Threshold').value;
+  document.getElementById('finishThresholdValue').textContent =
+    document.getElementById('finishThreshold').value;
 }
 
 async function saveWifiConfig() {
   const config = {
-    apPassword: document.getElementById("apPassword").value,
-    staSsid: document.getElementById("staSsid").value,
-    staPassword: document.getElementById("staPassword").value,
-    wifiChannel: parseInt(document.getElementById("wifiChannel").value)
+    apPassword: document.getElementById('apPassword').value,
+    staSsid: document.getElementById('staSsid').value,
+    staPassword: document.getElementById('staPassword').value,
+    wifiChannel: parseInt(document.getElementById('wifiChannel').value)
   };
 
   try {
@@ -256,23 +280,23 @@ async function saveWifiConfig() {
     });
 
     if (response.ok) {
-      document.getElementById("wifiMessage").textContent = "✓ Saved! Device restarting Wi-Fi...";
-      document.getElementById("apPassword").value = "";
-      document.getElementById("staPassword").value = "";
+      document.getElementById('wifiMessage').textContent = '✓ Saved! Device restarting Wi-Fi...';
+      document.getElementById('apPassword').value = '';
+      document.getElementById('staPassword').value = '';
     } else {
       const error = await response.json();
-      document.getElementById("wifiMessage").textContent = `✗ Error: ${error.error}`;
+      document.getElementById('wifiMessage').textContent = '✗ Error: ' + error.error;
     }
   } catch (err) {
-    document.getElementById("wifiMessage").textContent = "✗ Failed to save";
+    document.getElementById('wifiMessage').textContent = '✗ Failed to save';
   }
 }
 
 async function saveSensorConfig() {
   const config = {
-    startThreshold: parseFloat(document.getElementById("startThreshold").value),
-    line2Threshold: parseFloat(document.getElementById("line2Threshold").value),
-    finishThreshold: parseFloat(document.getElementById("finishThreshold").value)
+    startThreshold: parseFloat(document.getElementById('startThreshold').value),
+    line2Threshold: parseFloat(document.getElementById('line2Threshold').value),
+    finishThreshold: parseFloat(document.getElementById('finishThreshold').value)
   };
 
   try {
@@ -283,21 +307,20 @@ async function saveSensorConfig() {
     });
 
     if (response.ok) {
-      document.getElementById("sensorMessage").textContent = "✓ Saved!";
+      document.getElementById('sensorMessage').textContent = '✓ Saved!';
     } else {
       const error = await response.json();
-      document.getElementById("sensorMessage").textContent = `✗ Error: ${error.error}`;
+      document.getElementById('sensorMessage').textContent = '✗ Error: ' + error.error;
     }
   } catch (err) {
-    document.getElementById("sensorMessage").textContent = "✗ Failed to save";
+    document.getElementById('sensorMessage').textContent = '✗ Failed to save';
   }
 }
 
 async function savePeerConfig() {
   const config = {
-    peerMac: document.getElementById("peerMac").value,
-    gateNumber: parseInt(document.getElementById("gateNumber").value, 10),
-    deviceLabel: document.getElementById("peerDeviceLabel").value
+    gateNumber: parseInt(document.getElementById('gateNumber').value, 10),
+    peerMac: document.getElementById('peerMac').value
   };
 
   try {
@@ -308,37 +331,17 @@ async function savePeerConfig() {
     });
 
     if (response.ok) {
-      document.getElementById("peerMessage").textContent = "✓ Saved!";
+      document.getElementById('peerMessage').textContent = '✓ Saved!';
     } else {
       const error = await response.json();
-      document.getElementById("peerMessage").textContent = `✗ Error: ${error.error}`;
+      document.getElementById('peerMessage').textContent = '✗ Error: ' + error.error;
     }
   } catch (err) {
-    document.getElementById("peerMessage").textContent = "✗ Failed to save";
+    document.getElementById('peerMessage').textContent = '✗ Failed to save';
   }
 }
 
-// DOCUMENTS TAB
-async function testApiEndpoint(endpoint) {
-  const resultEl = document.getElementById("apiTestResult");
-  resultEl.style.display = "block";
-  resultEl.textContent = "Testing...";
-
-  try {
-    const options = endpoint === "ping" ? { method: 'POST' } : {};
-    const response = await fetch(`/api/${endpoint}`, options);
-    if (!response.ok) {
-      resultEl.textContent = `Error: ${response.status} ${response.statusText}`;
-      return;
-    }
-    const data = await response.json();
-    resultEl.textContent = JSON.stringify(data, null, 2);
-  } catch (err) {
-    resultEl.textContent = `Error: ${err.message}`;
-  }
-}
-
-// RESET TAB
+// RESET PAGE
 async function rebootDevice() {
   if (!confirm('Reboot the device? Settings will be preserved.')) return;
   try {
@@ -350,9 +353,8 @@ async function rebootDevice() {
 }
 
 async function factoryReset() {
-  if (!confirm('⚠️ Factory reset will erase ALL settings and riders. This cannot be undone. Continue?')) return;
+  if (!confirm('Factory reset will erase ALL settings and riders. This cannot be undone. Continue?')) return;
   if (!confirm('Really? This will erase everything.')) return;
-
   try {
     await fetch('/api/factory-reset', { method: 'POST' });
     alert('Device is factory resetting...');
@@ -388,40 +390,120 @@ async function downloadConfig() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `mtb-gate-config-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = 'mtb-gate-config-' + new Date().toISOString().slice(0, 10) + '.json';
     a.click();
   } catch (err) {
     alert('Error: ' + err.message);
   }
 }
 
+// API DOCS PAGE
+async function testApiEndpoint(endpoint) {
+  const resultEl = document.getElementById('apiTestResult');
+  resultEl.style.display = 'block';
+  resultEl.textContent = 'Testing...';
+
+  try {
+    const options = endpoint === 'ping' ? { method: 'POST' } : {};
+    const response = await fetch('/api/' + endpoint, options);
+    if (!response.ok) {
+      resultEl.textContent = 'Error: ' + response.status + ' ' + response.statusText;
+      return;
+    }
+    const data = await response.json();
+    resultEl.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    resultEl.textContent = 'Error: ' + err.message;
+  }
+}
+
+// PEER TOOLS PAGE
+function fillPeerForm(method, path, body) {
+  const urlInput = document.getElementById('peerUrl');
+  const current = urlInput.value;
+  // Preserve the base URL (origin) if already set, else default to empty origin
+  let base = '';
+  try {
+    if (current) {
+      const parsed = new URL(current);
+      base = parsed.origin;
+    }
+  } catch (_) { /* ignore */ }
+
+  document.getElementById('peerMethod').value = method;
+  urlInput.value = base + path;
+  document.getElementById('peerBody').value = body;
+  urlInput.focus();
+}
+
+async function sendPeerRequest() {
+  const method = document.getElementById('peerMethod').value;
+  const url = document.getElementById('peerUrl').value.trim();
+  const body = document.getElementById('peerBody').value.trim();
+  const resultEl = document.getElementById('peerResult');
+
+  if (!url) {
+    resultEl.style.display = 'block';
+    resultEl.textContent = 'Error: Target URL is required';
+    return;
+  }
+
+  resultEl.style.display = 'block';
+  resultEl.textContent = 'Sending...';
+
+  const options = { method };
+  if (body && (method === 'POST' || method === 'PUT')) {
+    options.headers = { 'Content-Type': 'application/json' };
+    options.body = body;
+  }
+
+  try {
+    const response = await fetch(url, options);
+    let text;
+    const ct = response.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const data = await response.json();
+      text = JSON.stringify(data, null, 2);
+    } else {
+      text = await response.text();
+    }
+    resultEl.textContent = 'HTTP ' + response.status + ' ' + response.statusText + '\n\n' + text;
+  } catch (err) {
+    resultEl.textContent = 'Error: ' + err.message +
+      '\n\nNote: Cross-origin requests require both gates to be on the same station network, ' +
+      'or the peer gate to send CORS headers.';
+  }
+}
+
 // EVENT LISTENERS
-document.getElementById("tapNfc").addEventListener("click", startNfcListen);
-document.getElementById("refreshRiders").addEventListener("click", loadRiders);
-document.getElementById("refreshResults").addEventListener("click", loadStatus);
+document.getElementById('tapNfc').addEventListener('click', startNfcListen);
+document.getElementById('refreshRiders').addEventListener('click', loadRiders);
+document.getElementById('refreshResults').addEventListener('click', loadStatus);
 
-// Network tab listeners
-document.getElementById("saveWifiConfig").addEventListener("click", saveWifiConfig);
-document.getElementById("saveSensorConfig").addEventListener("click", saveSensorConfig);
-document.getElementById("savePeerConfig").addEventListener("click", savePeerConfig);
+document.getElementById('saveWifiConfig').addEventListener('click', saveWifiConfig);
+document.getElementById('saveSensorConfig').addEventListener('click', saveSensorConfig);
+document.getElementById('savePeerConfig').addEventListener('click', savePeerConfig);
 
-// Slider value updates
-document.getElementById("startThreshold").addEventListener("input", updateSliderValues);
-document.getElementById("line2Threshold").addEventListener("input", updateSliderValues);
-document.getElementById("finishThreshold").addEventListener("input", updateSliderValues);
+document.getElementById('startThreshold').addEventListener('input', updateSliderValues);
+document.getElementById('line2Threshold').addEventListener('input', updateSliderValues);
+document.getElementById('finishThreshold').addEventListener('input', updateSliderValues);
 
-// Docs tab listeners
-document.getElementById("testStatus").addEventListener("click", () => testApiEndpoint("status"));
-document.getElementById("testRiders").addEventListener("click", () => testApiEndpoint("riders"));
-document.getElementById("testPing").addEventListener("click", () => testApiEndpoint("ping"));
+document.getElementById('testStatus').addEventListener('click', () => testApiEndpoint('status'));
+document.getElementById('testRiders').addEventListener('click', () => testApiEndpoint('riders'));
+document.getElementById('testPing').addEventListener('click', () => testApiEndpoint('ping'));
 
-// Reset tab listeners
-document.getElementById("rebootBtn").addEventListener("click", rebootDevice);
-document.getElementById("factoryResetBtn").addEventListener("click", factoryReset);
-document.getElementById("clearRidersBtn").addEventListener("click", clearAllRiders);
-document.getElementById("downloadConfig").addEventListener("click", downloadConfig);
+document.getElementById('rebootBtn').addEventListener('click', rebootDevice);
+document.getElementById('factoryResetBtn').addEventListener('click', factoryReset);
+document.getElementById('clearRidersBtn').addEventListener('click', clearAllRiders);
+document.getElementById('downloadConfig').addEventListener('click', downloadConfig);
+document.getElementById('sendPeerRequest').addEventListener('click', sendPeerRequest);
 
-// Initialize on page load
+// Initialize
+const initialPage = window.location.hash.slice(1);
+if (initialPage && PAGES.includes(initialPage)) {
+  navigateTo(initialPage);
+}
+
 loadStatus();
 loadRiders();
 loadNetworkConfig();
@@ -429,5 +511,6 @@ loadNetworkConfig();
 Object.assign(globalThis, {
   loadStatus,
   loadRiders,
-  loadNetworkConfig
+  loadNetworkConfig,
+  fillPeerForm
 });
