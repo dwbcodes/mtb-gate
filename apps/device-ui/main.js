@@ -1,6 +1,23 @@
 // PAGE NAVIGATION (hash-based)
 const PAGES = ['results', 'riders', 'config-network', 'config-gate', 'config-reset', 'docs', 'peer-tools'];
 
+async function apiJson(path, options = {}) {
+  const response = await fetch(path, options);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || `HTTP ${response.status}`);
+  }
+  return data;
+}
+
+function jsonOptions(method, payload) {
+  return {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  };
+}
+
 function navigateTo(page) {
   if (!PAGES.includes(page)) page = 'results';
 
@@ -32,8 +49,7 @@ document.querySelectorAll('.nav-link, .brand').forEach(link => {
 // RESULTS PAGE
 async function loadStatus() {
   try {
-    const response = await fetch('/api/status');
-    const status = await response.json();
+    const status = await apiJson('/api/status');
 
     document.getElementById('deviceLabel').textContent = status.deviceLabel || 'Gate Control';
     document.getElementById('deviceRole').textContent = (status.role || 'unknown') + ' gate';
@@ -66,7 +82,7 @@ async function loadStatus() {
 
 function renderAttempts(attempts) {
   const container = document.getElementById('attempts');
-  container.innerHTML = '';
+  container.replaceChildren();
 
   if (attempts.length === 0) {
     const p = document.createElement('p');
@@ -116,8 +132,7 @@ function formatMs(value) {
 // RIDERS PAGE
 async function loadRiders() {
   try {
-    const response = await fetch('/api/riders');
-    const riders = await response.json();
+    const riders = await apiJson('/api/riders');
     renderRidersList(riders);
   } catch (err) {
     console.error('Failed to load riders:', err);
@@ -126,7 +141,7 @@ async function loadRiders() {
 
 function renderRidersList(riders) {
   const list = document.getElementById('rosterList');
-  list.innerHTML = '';
+  list.replaceChildren();
 
   if (riders.length === 0) {
     const p = document.createElement('p');
@@ -166,17 +181,12 @@ async function startNfcListen() {
   statusEl.textContent = 'Hold card near device...';
 
   try {
-    const listenResponse = await fetch('/api/nfc/listen', { method: 'POST' });
-    if (!listenResponse.ok) {
-      const errorData = await listenResponse.json().catch(() => ({}));
-      throw new Error(errorData.error || `Failed to start NFC listening (${listenResponse.status})`);
-    }
+    await apiJson('/api/nfc/listen', { method: 'POST' });
 
     let tagId = null;
     const pollInterval = setInterval(async () => {
       try {
-        const response = await fetch('/api/nfc/tag');
-        const data = await response.json();
+        const data = await apiJson('/api/nfc/tag');
         if (data.ok && data.tagId) {
           tagId = data.tagId;
           clearInterval(pollInterval);
@@ -215,30 +225,19 @@ async function startNfcListen() {
 
 async function registerRider(displayName, tagId) {
   try {
-    const response = await fetch('/api/riders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tagId, displayName })
-    });
-
-    if (response.ok) {
-      document.getElementById('nfcStatus').textContent = '✓ Registered: ' + displayName;
-      loadRiders();
-    } else {
-      const error = await response.json();
-      document.getElementById('nfcStatus').textContent = 'Error: ' + error.error;
-    }
+    await apiJson('/api/riders', jsonOptions('POST', { tagId, displayName }));
+    document.getElementById('nfcStatus').textContent = '✓ Registered: ' + displayName;
+    loadRiders();
   } catch (err) {
     console.error('Failed to register rider:', err);
-    document.getElementById('nfcStatus').textContent = 'Error registering rider';
+    document.getElementById('nfcStatus').textContent = 'Error: ' + err.message;
   }
 }
 
 // NETWORK CONFIG PAGE
 async function loadNetworkConfig() {
   try {
-    const response = await fetch('/api/config');
-    const config = await response.json();
+    const config = await apiJson('/api/config');
 
     document.getElementById('apSsid').value = config.deviceId || '';
     document.getElementById('staSsid').value = config.staSsid || '';
@@ -264,6 +263,17 @@ function updateSliderValues() {
     document.getElementById('finishThreshold').value;
 }
 
+async function saveJsonConfig(endpoint, payload, messageElementId, successText, afterSuccess) {
+  const messageEl = document.getElementById(messageElementId);
+  try {
+    await apiJson(endpoint, jsonOptions('PUT', payload));
+    messageEl.textContent = successText;
+    if (afterSuccess) afterSuccess();
+  } catch (err) {
+    messageEl.textContent = '✗ Error: ' + err.message;
+  }
+}
+
 async function saveWifiConfig() {
   const config = {
     apPassword: document.getElementById('apPassword').value,
@@ -272,24 +282,16 @@ async function saveWifiConfig() {
     wifiChannel: parseInt(document.getElementById('wifiChannel').value)
   };
 
-  try {
-    const response = await fetch('/api/config/wifi', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(config)
-    });
-
-    if (response.ok) {
-      document.getElementById('wifiMessage').textContent = '✓ Saved! Device restarting Wi-Fi...';
+  await saveJsonConfig(
+    '/api/config/wifi',
+    config,
+    'wifiMessage',
+    '✓ Saved! Device restarting Wi-Fi...',
+    () => {
       document.getElementById('apPassword').value = '';
       document.getElementById('staPassword').value = '';
-    } else {
-      const error = await response.json();
-      document.getElementById('wifiMessage').textContent = '✗ Error: ' + error.error;
     }
-  } catch (err) {
-    document.getElementById('wifiMessage').textContent = '✗ Failed to save';
-  }
+  );
 }
 
 async function saveSensorConfig() {
@@ -299,22 +301,7 @@ async function saveSensorConfig() {
     finishThreshold: parseFloat(document.getElementById('finishThreshold').value)
   };
 
-  try {
-    const response = await fetch('/api/config/time', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(config)
-    });
-
-    if (response.ok) {
-      document.getElementById('sensorMessage').textContent = '✓ Saved!';
-    } else {
-      const error = await response.json();
-      document.getElementById('sensorMessage').textContent = '✗ Error: ' + error.error;
-    }
-  } catch (err) {
-    document.getElementById('sensorMessage').textContent = '✗ Failed to save';
-  }
+  await saveJsonConfig('/api/config/time', config, 'sensorMessage', '✓ Saved!');
 }
 
 async function savePeerConfig() {
@@ -323,22 +310,7 @@ async function savePeerConfig() {
     peerMac: document.getElementById('peerMac').value
   };
 
-  try {
-    const response = await fetch('/api/config/mac', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(config)
-    });
-
-    if (response.ok) {
-      document.getElementById('peerMessage').textContent = '✓ Saved!';
-    } else {
-      const error = await response.json();
-      document.getElementById('peerMessage').textContent = '✗ Error: ' + error.error;
-    }
-  } catch (err) {
-    document.getElementById('peerMessage').textContent = '✗ Failed to save';
-  }
+  await saveJsonConfig('/api/config/mac', config, 'peerMessage', '✓ Saved!');
 }
 
 // RESET PAGE

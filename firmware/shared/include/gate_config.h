@@ -13,6 +13,7 @@ struct GateConfig {
   float startThreshold;
   float finishThreshold;
   float line2Threshold;
+  float triggerDelta;
   uint8_t wifiChannel;
   GateRole role;
   String peerMac;
@@ -34,6 +35,7 @@ private:
   static constexpr const char* kStartThresholdKey = "startTh";
   static constexpr const char* kFinishThresholdKey = "finishTh";
   static constexpr const char* kLine2ThresholdKey = "line2Th";
+  static constexpr const char* kTriggerDeltaKey = "trigDelta";
   static constexpr const char* kWifiChannelKey = "wifiCh";
   static constexpr const char* kRoleKey = "role";
   static constexpr const char* kPeerMacKey = "peerMac";

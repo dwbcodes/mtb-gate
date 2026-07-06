@@ -9,15 +9,17 @@ GateRole parseGateRole(const String& roleStr) {
 GateConfig GateConfigStore::load() {
   Preferences preferences;
   preferences.begin(kNamespace, true);
-  const uint8_t storedGateNumber = preferences.getUChar(kGateNumberKey, 1);
+  const uint8_t rawGateNumber = preferences.getUChar(kGateNumberKey, 1);
+  const uint8_t storedGateNumber = rawGateNumber > 0 ? rawGateNumber : 1;
   const String deviceId = buildDeviceId(storedGateNumber);
   const String storedLabel = preferences.getString(kDeviceLabelKey, defaultDeviceLabel(storedGateNumber));
   const String storedApPassword = preferences.getString(kApPasswordKey, "changeme123");
   const String storedStaSsid = preferences.getString(kStaSsidKey, "");
   const String storedStaPassword = preferences.getString(kStaPasswordKey, "");
-  const float storedStartThreshold = preferences.getFloat(kStartThresholdKey, 0.85F);
-  const float storedFinishThreshold = preferences.getFloat(kFinishThresholdKey, 0.85F);
-  const float storedLine2Threshold = preferences.getFloat(kLine2ThresholdKey, 0.85F);
+  const float storedStartThreshold = preferences.getFloat(kStartThresholdKey, 2.0F);
+  const float storedFinishThreshold = preferences.getFloat(kFinishThresholdKey, 2.0F);
+  const float storedLine2Threshold = preferences.getFloat(kLine2ThresholdKey, 2.0F);
+  const float storedTriggerDelta = preferences.getFloat(kTriggerDeltaKey, 0.3F);
   const uint8_t storedWifiChannel = preferences.getUChar(kWifiChannelKey, 1);
   const String storedRole = preferences.getString(kRoleKey, "start");
   const String storedPeerMac = preferences.getString(kPeerMacKey, "");
@@ -32,6 +34,7 @@ GateConfig GateConfigStore::load() {
     storedStartThreshold,
     storedFinishThreshold,
     storedLine2Threshold,
+    storedTriggerDelta,
     storedWifiChannel,
     parseGateRole(storedRole),
     storedPeerMac,
@@ -49,6 +52,7 @@ GateConfig GateConfigStore::save(const GateConfig& config) {
   preferences.putFloat(kStartThresholdKey, config.startThreshold);
   preferences.putFloat(kFinishThresholdKey, config.finishThreshold);
   preferences.putFloat(kLine2ThresholdKey, config.line2Threshold);
+  preferences.putFloat(kTriggerDeltaKey, config.triggerDelta);
   preferences.putUChar(kWifiChannelKey, config.wifiChannel);
   preferences.putString(kRoleKey, gateRoleName(config.role));
   preferences.putString(kPeerMacKey, config.peerMac);

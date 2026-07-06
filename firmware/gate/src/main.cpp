@@ -24,9 +24,10 @@ GateConfig config = {
   "changeme123",        // apPassword
   "",                   // staSsid
   "",                   // staPassword
-  0.85F,                // startThreshold
-  0.85F,                // finishThreshold
-  0.85F,                // line2Threshold
+  2.0F,                 // startThreshold
+  2.0F,                 // finishThreshold
+  2.0F,                 // line2Threshold
+  0.3F,                 // triggerDelta
   1,                    // wifiChannel
   GateRole::Start,      // role
   "",                   // peerMac
@@ -34,8 +35,8 @@ GateConfig config = {
 };
 
 RunQueue queue;
-SensorGate startSensor(0.85F);
-SensorGate finishSensor(0.85F);
+SensorGate startSensor(2.0F);
+SensorGate finishSensor(2.0F);
 WebServer server(80);
 RiderStore riderStore;
 NfcReader nfcReader;
@@ -48,18 +49,117 @@ IPAddress staIp;
 bool pendingNetworkRestart = false;
 String lastScannedNfcTag = "";
 
-RunRecord buildMockRun() {
-  RunRecord run;
-  run.runId = config.deviceId + "-rider-1";
-  run.riderId = "rider-1";
-  run.riderName = "Demo Rider";
-  run.status = RunStatus::Queued;
-  run.queuedAtMs = millis();
-  run.countdownStartedAtMs = 0;
-  run.goAtMs = 0;
-  run.startTriggeredAtMs = 0;
-  run.finishTriggeredAtMs = 0;
-  return run;
+// Sensor pin and reading
+constexpr int SENSOR_LINE1_PIN = 0;
+constexpr float ADC_MAX = 4095.0F;
+constexpr float ADC_VREF = 3.3F;
+
+// Countdown state
+constexpr int COUNTDOWN_SECONDS = 10;
+constexpr unsigned long PENALTY_MS = 5000;
+String activeRunId = "";
+int lastAnnouncedSecond = -1;
+bool falseStartDetected = false;
+
+float readSensorVoltage(int pin) {
+  int raw = analogRead(pin);
+  return (raw / ADC_MAX) * ADC_VREF;
+}
+
+// Baseline-relative trigger: detect spike above rolling average
+constexpr int BASELINE_SAMPLES = 20;
+float triggerDelta = 0.15F;  // voltage rise above baseline to trigger (updated from config/calibration)
+constexpr int DEBOUNCE_COUNT = 3;
+float baselineBuffer[BASELINE_SAMPLES];
+int baselineIndex = 0;
+bool baselineFilled = false;
+int sensorAboveCount = 0;
+
+void updateBaseline(float voltage) {
+  baselineBuffer[baselineIndex] = voltage;
+  baselineIndex = (baselineIndex + 1) % BASELINE_SAMPLES;
+  if (baselineIndex == 0) baselineFilled = true;
+}
+
+float getBaseline() {
+  int count = baselineFilled ? BASELINE_SAMPLES : baselineIndex;
+  if (count == 0) return 1.65F;  // default rest voltage
+  float sum = 0;
+  for (int i = 0; i < count; i++) sum += baselineBuffer[i];
+  return sum / count;
+}
+
+bool baselineFrozen = false;
+
+void freezeBaseline() { baselineFrozen = true; }
+void unfreezeBaseline() { baselineFrozen = false; }
+
+bool sensorTriggered(int pin) {
+  float voltage = readSensorVoltage(pin);
+  float baseline = getBaseline();
+  if (voltage > baseline + triggerDelta) {
+    sensorAboveCount++;
+  } else {
+    sensorAboveCount = 0;
+    if (!baselineFrozen) {
+      updateBaseline(voltage);
+    }
+  }
+  return sensorAboveCount >= DEBOUNCE_COUNT;
+}
+
+void runCalibration() {
+  if (activeRunId.length() > 0) {
+    GATE_CONSOLE.println("[CAL] Cannot calibrate during active run");
+    return;
+  }
+
+  // Phase 1: Sample idle noise for 3 seconds
+  GATE_CONSOLE.println("[CAL] Phase 1: Sampling idle noise for 3 seconds...");
+  GATE_CONSOLE.println("[CAL] Do NOT touch the tube.");
+  float idleMin = 9.0F, idleMax = 0.0F, idleSum = 0.0F;
+  int idleCount = 0;
+  unsigned long start = millis();
+  while (millis() - start < 3000) {
+    float v = readSensorVoltage(SENSOR_LINE1_PIN);
+    if (v < idleMin) idleMin = v;
+    if (v > idleMax) idleMax = v;
+    idleSum += v;
+    idleCount++;
+    delay(10);
+  }
+  float idleAvg = idleSum / idleCount;
+  float noiseRange = idleMax - idleMin;
+  GATE_CONSOLE.println("[CAL] Idle: avg=" + String(idleAvg, 2) + "V min=" + String(idleMin, 2) + "V max=" + String(idleMax, 2) + "V noise=" + String(noiseRange, 2) + "V");
+
+  // Phase 2: Wait for tube press within 5 seconds
+  GATE_CONSOLE.println("[CAL] Phase 2: PRESS the tube now (5 seconds)...");
+  float peakV = 0.0F;
+  start = millis();
+  while (millis() - start < 5000) {
+    float v = readSensorVoltage(SENSOR_LINE1_PIN);
+    if (v > peakV) peakV = v;
+    delay(5);
+  }
+  GATE_CONSOLE.println("[CAL] Peak: " + String(peakV, 2) + "V");
+
+  float peakDelta = peakV - idleAvg;
+  if (peakDelta < noiseRange * 1.2F) {
+    GATE_CONSOLE.println("[CAL] FAILED - peak not significantly above noise. Press harder or check tube connection.");
+    return;
+  }
+
+  // Set delta just above noise ceiling (20% margin over half noise range)
+  // With frozen baseline + debounce=3, this is safe
+  float halfNoise = noiseRange / 2.0F;
+  float newDelta = halfNoise * 1.3F;  // just above max noise deviation from average
+
+  triggerDelta = newDelta;
+  config.triggerDelta = newDelta;
+  config = configStore.save(config);
+
+  GATE_CONSOLE.println("[CAL] SUCCESS - delta set to " + String(newDelta, 2) + "V (noise=" + String(noiseRange, 2) + "V peak=" + String(peakDelta, 2) + "V above idle)");
+  GATE_CONSOLE.println("[CAL] Trigger threshold = baseline + " + String(newDelta, 2) + "V");
 }
 
 bool hasStaConnection() {
@@ -67,7 +167,7 @@ bool hasStaConnection() {
 }
 
 void printHelp() {
-  GATE_CONSOLE.println("Commands: status | role=start | role=finish | wifi");
+  GATE_CONSOLE.println("Commands: status | role=start | role=finish | wifi | calibrate");
   GATE_CONSOLE.println("Console API: api status | api config | api config/wifi <json> | api config/time <json> | api config/mac <json> | api riders | api riders/add <json> | api riders/delete <json> | api ping");
 }
 
@@ -124,7 +224,8 @@ void startWifi() {
   WiFi.setSleep(false);
   yield();
 
-  const IPAddress apStaticIp(192, 168, 4, config.gateNumber);
+  const uint8_t gateIpOctet = config.gateNumber > 0 ? config.gateNumber : 1;
+  const IPAddress apStaticIp(192, 168, 4, gateIpOctet);
   const IPAddress apGateway(192, 168, 4, 1);
   const IPAddress apSubnet(255, 255, 255, 0);
   WiFi.softAPConfig(apStaticIp, apGateway, apSubnet);
@@ -142,6 +243,7 @@ void startWifi() {
 
   staIp = IPAddress(0, 0, 0, 0);
   if (config.staSsid.length() > 0) {
+    WiFi.setHostname(config.deviceId.c_str());
     WiFi.begin(config.staSsid.c_str(), config.staPassword.c_str());
     yield();
     const unsigned long startedAt = millis();
@@ -264,6 +366,55 @@ void printApiResponse(const String& payload) {
   GATE_CONSOLE.println(payload);
 }
 
+bool payloadHasError(const String& payload) {
+  return payload.indexOf("\"error\"") >= 0;
+}
+
+void sendJson(int statusCode, const String& payload) {
+  server.send(statusCode, "application/json", payload);
+}
+
+void sendJsonError(int statusCode, const char* message) {
+  JsonDocument doc;
+  doc["error"] = message;
+  String payload;
+  serializeJson(doc, payload);
+  sendJson(statusCode, payload);
+}
+
+void sendJsonOperation(HTTPMethod method, String (*operation)(const String&), bool restartNetwork = false) {
+  if (server.method() != method) {
+    sendJsonError(405, "Method not allowed");
+    return;
+  }
+
+  const String body = server.arg("plain");
+  if (body.length() == 0) {
+    sendJsonError(400, "Body required");
+    return;
+  }
+
+  const String payload = operation(body);
+  if (payloadHasError(payload)) {
+    sendJson(400, payload);
+    return;
+  }
+
+  sendJson(200, payload);
+  if (restartNetwork) {
+    pendingNetworkRestart = true;
+  }
+}
+
+void sendEmptyBodyOperation(HTTPMethod method, String (*operation)()) {
+  if (server.method() != method) {
+    sendJsonError(405, "Method not allowed");
+    return;
+  }
+
+  sendJson(200, operation());
+}
+
 String updateTimeConfigFromJson(const String& body) {
   JsonDocument doc;
   DeserializationError error = deserializeJson(doc, body);
@@ -323,7 +474,11 @@ String updateMacConfigFromJson(const String& body) {
   if (doc["role"].is<String>()) next.role = parseGateRole(doc["role"].as<String>());
   if (doc["deviceLabel"].is<String>()) next.deviceLabel = doc["deviceLabel"].as<String>();
   if (doc["gateNumber"].is<int>()) {
-    next.gateNumber = (uint8_t)doc["gateNumber"].as<int>();
+    const int gn = doc["gateNumber"].as<int>();
+    if (gn < 1 || gn > 254) {
+      return R"({"error":"gateNumber must be 1-254"})";
+    }
+    next.gateNumber = (uint8_t)gn;
     next.deviceId = GateConfigStore::buildDeviceId(next.gateNumber);
   }
 
@@ -371,6 +526,10 @@ String deleteRiderFromJson(const String& body) {
   return R"({"ok":true})";
 }
 
+String pingJson() {
+  return R"({"ok":true,"sent":false})";
+}
+
 void handleRoot() {
   server.send_P(200, "text/html; charset=utf-8", (const char*)index_html_data, sizeof(index_html_data));
 }
@@ -385,6 +544,8 @@ void handleMainJs() {
 
 }  // Close namespace
 
+void startRunForRider(const String& tagId);
+
 void handleStatusApi() {
   server.send(200, "application/json; charset=utf-8", statusJson());
 }
@@ -397,108 +558,32 @@ void restartNetworking() {
 }
 
 void handleGetConfig() {
-  server.send(200, "application/json", configJson());
+  sendJson(200, configJson());
 }
 
 void handlePutConfigWifi() {
-  if (server.method() != HTTP_PUT) {
-    server.send(405, "application/json", R"({"error":"Method not allowed"})");
-    return;
-  }
-
-  String body = server.arg("plain");
-  if (body.length() == 0) {
-    server.send(400, "application/json", R"({"error":"Body required"})");
-    return;
-  }
-
-  JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, body);
-  if (error) {
-    server.send(400, "application/json", R"({"error":"Invalid JSON"})");
-    return;
-  }
-
-  const String payload = updateWifiConfigFromJson(body);
-  if (payload.indexOf("\"error\"") >= 0) {
-    server.send(400, "application/json", payload);
-    return;
-  }
-
-  server.send(200, "application/json", payload);
-  pendingNetworkRestart = true;
+  sendJsonOperation(HTTP_PUT, updateWifiConfigFromJson, true);
 }
 
 void handlePutConfigTime() {
-  if (server.method() != HTTP_PUT) {
-    server.send(405, "application/json", R"({"error":"Method not allowed"})");
-    return;
-  }
-
-  const String body = server.arg("plain");
-  if (body.length() == 0) {
-    server.send(400, "application/json", R"({"error":"Body required"})");
-    return;
-  }
-  const String payload = updateTimeConfigFromJson(body);
-  if (payload.indexOf("\"error\"") >= 0) {
-    server.send(400, "application/json", payload);
-    return;
-  }
-
-  server.send(200, "application/json", payload);
+  sendJsonOperation(HTTP_PUT, updateTimeConfigFromJson);
 }
 
 void handlePutConfigMac() {
-  if (server.method() != HTTP_PUT) {
-    server.send(405, "application/json", R"({"error":"Method not allowed"})");
-    return;
-  }
-
-  String body = server.arg("plain");
-  if (body.length() == 0) {
-    server.send(400, "application/json", R"({"error":"Body required"})");
-    return;
-  }
-
-  JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, body);
-  if (error) {
-    server.send(400, "application/json", R"({"error":"Invalid JSON"})");
-    return;
-  }
-
-  const String payload = updateMacConfigFromJson(body);
-  if (payload.indexOf("\"error\"") >= 0) {
-    server.send(400, "application/json", payload);
-    return;
-  }
-
-  server.send(200, "application/json", payload);
+  sendJsonOperation(HTTP_PUT, updateMacConfigFromJson);
 }
 
 void handleGetRiders() {
-  server.send(200, "application/json", ridersJson());
+  sendJson(200, ridersJson());
 }
 
 void handlePostRiders() {
-  if (server.method() != HTTP_POST) {
-    server.send(405, "application/json", R"({"error":"Method not allowed"})");
-    return;
-  }
-
-  const String body = server.arg("plain");
-  if (body.length() == 0) {
-    server.send(400, "application/json", R"({"error":"Body required"})");
-    return;
-  }
-  const String payload = addRiderFromJson(body);
-  server.send(payload.indexOf("\"error\"") >= 0 ? 400 : 200, "application/json", payload);
+  sendJsonOperation(HTTP_POST, addRiderFromJson);
 }
 
 void handleDeleteRiders() {
   if (server.method() != HTTP_DELETE) {
-    server.send(405, "application/json", R"({"error":"Method not allowed"})");
+    sendJsonError(405, "Method not allowed");
     return;
   }
 
@@ -509,7 +594,7 @@ void handleDeleteRiders() {
       JsonDocument doc;
       DeserializationError error = deserializeJson(doc, body);
       if (error) {
-        server.send(400, "application/json", R"({"error":"Invalid JSON"})");
+        sendJsonError(400, "Invalid JSON");
         return;
       }
       if (doc["tagId"].is<String>()) {
@@ -518,27 +603,32 @@ void handleDeleteRiders() {
     }
   }
   if (tagId.length() == 0) {
-    server.send(400, "application/json", R"({"error":"tagId required"})");
+    sendJsonError(400, "tagId required");
     return;
   }
 
   riderStore.remove(tagId);
-  server.send(200, "application/json", R"({"ok":true})");
+  sendJson(200, R"({"ok":true})");
 }
 
 void handlePostReboot() {
-  server.send(200, "application/json", R"({"ok":true})");
+  sendJson(200, R"({"ok":true})");
   delay(500);
   ESP.restart();
 }
 
-void handlePostPing() {
+void handlePostCalibrate() {
   if (server.method() != HTTP_POST) {
-    server.send(405, "application/json", R"({"error":"Method not allowed"})");
+    sendJsonError(405, "Method not allowed");
     return;
   }
+  sendJson(200, R"({"ok":true,"message":"Calibration started - watch serial output"})");
+  delay(100);
+  runCalibration();
+}
 
-  server.send(200, "application/json", R"({"ok":true,"sent":false})");
+void handlePostPing() {
+  sendEmptyBodyOperation(HTTP_POST, pingJson);
 }
 
 void handleNfcStartListen() {
@@ -646,6 +736,7 @@ void configureWebServer() {
   server.on("/api/riders", HTTP_DELETE, handleDeleteRiders);
   server.on("/api/ping", HTTP_POST, handlePostPing);
   server.on("/api/reboot", HTTP_POST, handlePostReboot);
+  server.on("/api/calibrate", HTTP_POST, handlePostCalibrate);
   
   // NFC endpoints
   server.on("/api/nfc/listen", HTTP_POST, handleNfcStartListen);
@@ -653,12 +744,14 @@ void configureWebServer() {
   server.on("/api/nfc/diagnostics", HTTP_GET, handleNfcDiagnostics);
   server.on("/api/i2c/scan", HTTP_GET, handleI2cScan);
   
+  server.enableCORS(true);
   server.begin();
 }
 
 void handleSerialCommand(const String& rawCommand) {
   String command = rawCommand;
   command.trim();  // strips \r, \n, and leading/trailing spaces
+  if (command.length() == 0) return;
 
   if (command.equalsIgnoreCase("api status")) {
     printApiResponse(statusJson());
@@ -726,6 +819,23 @@ void handleSerialCommand(const String& rawCommand) {
     return;
   }
 
+  if (command.equalsIgnoreCase("calibrate")) {
+    runCalibration();
+    return;
+  }
+
+  if (command.startsWith("scan=")) {
+    String tagId = command.substring(5);
+    tagId.trim();
+    if (tagId.length() > 0) {
+      GATE_CONSOLE.println("[SERIAL] Simulated NFC scan: " + tagId);
+      startRunForRider(tagId);
+    } else {
+      GATE_CONSOLE.println("Usage: scan=<tagId>");
+    }
+    return;
+  }
+
   if (command.equalsIgnoreCase("wifi")) {
     printWifiStatus();
     printStatus();
@@ -735,18 +845,105 @@ void handleSerialCommand(const String& rawCommand) {
   printHelp();
 }
 
+void startRunForRider(const String& tagId) {
+  RiderEntry* rider = nullptr;
+  for (size_t i = 0; i < riderStore.count(); i++) {
+    RiderEntry* e = riderStore.at(i);
+    if (e && e->tagId == tagId) { rider = e; break; }
+  }
+  if (!rider) {
+    GATE_CONSOLE.println("[RUN] Unknown tag " + tagId + " - register rider first");
+    return;
+  }
+  if (activeRunId.length() > 0) {
+    GATE_CONSOLE.println("[RUN] Run already active, ignoring scan");
+    return;
+  }
+
+  RunRecord run;
+  run.runId = config.deviceId + "-" + rider->riderId + "-" + String(millis());
+  run.riderId = rider->riderId;
+  run.riderName = rider->displayName;
+  run.status = RunStatus::Queued;
+  run.queuedAtMs = millis();
+  run.countdownStartedAtMs = 0;
+  run.goAtMs = 0;
+  run.startTriggeredAtMs = 0;
+  run.line2TriggeredAtMs = 0;
+  run.finishTriggeredAtMs = 0;
+
+  if (!queue.enqueue(run)) {
+    GATE_CONSOLE.println("[RUN] Queue full");
+    return;
+  }
+
+  activeRunId = run.runId;
+  lastAnnouncedSecond = -1;
+  falseStartDetected = false;
+  sensorAboveCount = 0;
+  GATE_CONSOLE.println("[RUN] Rider " + rider->displayName + " scanned - starting countdown");
+}
+
 void handleStartGateLoop(unsigned long now) {
-  if (RunRecord* run = queue.find(config.deviceId + "-rider-1")) {
-    if (run->status == RunStatus::Queued) {
-      queue.updateStatus(run->runId, RunStatus::Countdown, now);
-      GATE_CONSOLE.println("Countdown started");
-    } else if (run->status == RunStatus::Countdown) {
-      queue.updateStatus(run->runId, RunStatus::AwaitingStart, now);
-      GATE_CONSOLE.println("GO");
-    } else if (run->status == RunStatus::AwaitingStart && startSensor.isTriggered(0.91F)) {
-      queue.updateStatus(run->runId, RunStatus::OnCourse, now);
-      GATE_CONSOLE.println("Start trigger detected");
+  if (activeRunId.length() == 0) return;
+
+  RunRecord* run = queue.find(activeRunId);
+  if (!run) { activeRunId = ""; unfreezeBaseline(); return; }
+
+  // Queued → start countdown
+  if (run->status == RunStatus::Queued) {
+    queue.updateStatus(run->runId, RunStatus::Countdown, now);
+    freezeBaseline();
+    lastAnnouncedSecond = COUNTDOWN_SECONDS;
+    GATE_CONSOLE.println("[RUN] Countdown: " + String(COUNTDOWN_SECONDS));
+    return;
+  }
+
+  // Countdown → tick each second, check for false start
+  if (run->status == RunStatus::Countdown) {
+    unsigned long elapsed = now - run->countdownStartedAtMs;
+    int secondsLeft = COUNTDOWN_SECONDS - (int)(elapsed / 1000);
+
+    if (secondsLeft >= 0 && secondsLeft != lastAnnouncedSecond) {
+      lastAnnouncedSecond = secondsLeft;
+      if (secondsLeft > 0) {
+        GATE_CONSOLE.println("[RUN] Countdown: " + String(secondsLeft));
+      }
     }
+
+    // Only check false start in final 3 seconds (rider should be in position)
+    if (!falseStartDetected && secondsLeft <= 3 && sensorTriggered(SENSOR_LINE1_PIN)) {
+      falseStartDetected = true;
+      GATE_CONSOLE.println("[RUN] FALSE START! 5 second penalty");
+    }
+
+    // Countdown complete
+    if (elapsed >= (unsigned long)COUNTDOWN_SECONDS * 1000UL) {
+      queue.updateStatus(run->runId, RunStatus::AwaitingStart, now);
+      if (falseStartDetected) {
+        GATE_CONSOLE.println("[RUN] GO! (5s penalty will be added)");
+      } else {
+        GATE_CONSOLE.println("[RUN] GO!");
+      }
+    }
+    return;
+  }
+
+  // AwaitingStart → wait for sensor trigger
+  if (run->status == RunStatus::AwaitingStart) {
+    if (sensorTriggered(SENSOR_LINE1_PIN)) {
+      queue.updateStatus(run->runId, RunStatus::OnCourse, now);
+      unsigned long reactionMs = run->startTriggeredAtMs - run->goAtMs;
+      if (falseStartDetected) {
+        reactionMs += PENALTY_MS;
+        GATE_CONSOLE.println("[RUN] TRIGGERED - Reaction: " + String(reactionMs) + "ms (includes 5000ms penalty)");
+      } else {
+        GATE_CONSOLE.println("[RUN] TRIGGERED - Reaction: " + String(reactionMs) + "ms");
+      }
+      activeRunId = "";
+      unfreezeBaseline();
+    }
+    return;
   }
 }
 
@@ -764,9 +961,17 @@ void setup() {
 
   riderStore.loadAll();
   applySensorThresholds();
+  triggerDelta = config.triggerDelta;
+  pinMode(SENSOR_LINE1_PIN, INPUT);
+  // Seed baseline with initial readings
+  for (int i = 0; i < BASELINE_SAMPLES; i++) {
+    baselineBuffer[i] = readSensorVoltage(SENSOR_LINE1_PIN);
+    delay(5);
+  }
+  baselineFilled = true;
+  GATE_CONSOLE.println("[SENSOR] GPIO" + String(SENSOR_LINE1_PIN) + " baseline=" + String(getBaseline(), 2) + "V delta=" + String(triggerDelta, 2) + "V");
   startWifi();
   configureWebServer();
-  queue.enqueue(buildMockRun());
   nfcInitAfterMs = millis() + 2000;
 
   GATE_CONSOLE.println("Unified gate firmware ready");
@@ -788,6 +993,24 @@ void loop() {
 
   nfcReader.poll();
 
+  // Continuously scan NFC when idle (no active run) on start gate
+  if (config.role == GateRole::Start && nfcReader.isInitialized() && activeRunId.length() == 0) {
+    String tagId;
+    if (nfcReader.readTag(tagId)) {
+      lastScannedNfcTag = tagId;
+      GATE_CONSOLE.println("[NFC] Tag scanned: " + tagId);
+      startRunForRider(tagId);
+    }
+  }
+
+  // Also check API-triggered listen window (for registration flow)
+  if (config.role == GateRole::Start) {
+    String tagId;
+    if (nfcReader.getScannedTag(tagId)) {
+      lastScannedNfcTag = tagId;
+    }
+  }
+
   if (GATE_CONSOLE.available() > 0) {
     handleSerialCommand(GATE_CONSOLE.readStringUntil('\n'));
   }
@@ -800,7 +1023,8 @@ void loop() {
   }
 
   const unsigned long now = millis();
-  const unsigned long intervalMs = config.role == GateRole::Start ? 1000 : 1500;
+  // Poll at 100ms during active run for responsive sensor detection, 1s otherwise
+  const unsigned long intervalMs = (config.role == GateRole::Start && activeRunId.length() > 0) ? 100 : 1000;
   if (now - lastLogAt < intervalMs) {
     return;
   }
