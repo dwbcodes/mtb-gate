@@ -14,10 +14,17 @@
     "simulate": "node --experimental-strip-types packages/simulator/src/cli.ts",
     "api:dev": "node --experimental-strip-types services/api/src/dev-server.ts",
     "embed:device-ui": "node scripts/embed-device-ui.mjs",
-    "test:device": "playwright test --config tests/device/playwright.config.ts --grep @console",
+    "test:device": "npx playwright test --config tests/device/playwright.config.ts",
     "test:device:console": "playwright test --config tests/device/playwright.config.ts --grep @console",
     "test:device:api": "playwright test --config tests/device/playwright.config.ts --grep @api",
-    "test:device:ui": "playwright test --config tests/device/playwright.config.ts --grep @ui"
+    "test:device:ui": "playwright test --config tests/device/playwright.config.ts --grep @ui",
+    "test:device:validation": "npx playwright test --config tests/device/playwright.config.ts --grep @api-validation",
+    "test:device:integration": "npx playwright test --config tests/device/playwright.config.ts --grep @api-integration",
+    "test:device:endpoints": "npx playwright test --config tests/device/playwright.config.ts --grep @api-endpoints",
+    "test:device:console-extended": "npx playwright test --config tests/device/playwright.config.ts --grep @console-extended",
+    "test:device:roles": "npx playwright test --config tests/device/playwright.config.ts --grep @api-roles",
+    "test:device:topology": "npx playwright test --config tests/device/playwright.config.ts --grep @destructive",
+    "test:device:destructive": "npx playwright test --config tests/device/playwright.config.ts --grep @destructive"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",

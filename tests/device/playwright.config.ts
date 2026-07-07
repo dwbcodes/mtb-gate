@@ -1,16 +1,19 @@
 import { defineConfig, devices } from "@playwright/test";
+import { getDeviceTestConfig } from "./test-config.ts";
+
+const testConfig = getDeviceTestConfig();
 
 export default defineConfig({
   testDir: ".",
   testMatch: /.*\.spec\.ts/,
   fullyParallel: false,
   workers: 1,
-  timeout: Number(process.env.MTB_GATE_TEST_TIMEOUT_MS ?? 120_000),
+  timeout: testConfig.testTimeoutMs,
   expect: {
-    timeout: Number(process.env.MTB_GATE_EXPECT_TIMEOUT_MS ?? 10_000)
+    timeout: testConfig.expectTimeoutMs
   },
   use: {
-    baseURL: process.env.MTB_GATE_BASE_URL ?? "http://192.168.4.1",
+    baseURL: testConfig.baseUrl,
     trace: "retain-on-failure"
   },
   projects: [

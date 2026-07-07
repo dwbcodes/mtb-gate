@@ -1,0 +1,59 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+
+const root = process.cwd();
+
+function readUiFile(file: string) {
+  return readFileSync(join(root, "apps/device-ui", file), "utf8");
+}
+
+describe("device UI static contract", () => {
+  it("keeps start-only rider surfaces marked for role-specific hiding", () => {
+    const html = readUiFile("index.html");
+
+    assert.match(html, /data-page="riders" data-start-only/);
+    assert.match(html, /id="page-riders" class="page" data-start-only/);
+    assert.match(html, /data-page="peer-tools" data-start-only/);
+    assert.match(html, /id="page-peer-tools" class="page" data-start-only/);
+    assert.match(html, /<div class="danger-actions" data-start-only>/);
+  });
+
+  it("supports start gate identity and mobile navigation layout", () => {
+    const html = readUiFile("index.html");
+    const css = readUiFile("styles.css");
+
+    assert.match(html, /<option value="1">Gate Start<\/option>/);
+    assert.match(html, /class="topbar"/);
+    assert.match(html, /class="app-nav"/);
+    assert.match(css, /env\(safe-area-inset-bottom\)/);
+    assert.match(css, /@media \(min-width: 760px\)/);
+  });
+
+  it("applies role UI from status before rendering gate state", () => {
+    const js = readUiFile("main.js");
+
+    assert.match(js, /function applyRoleUi\(role\)/);
+    assert.match(js, /pageRequiresStart/);
+    assert.match(js, /applyRoleUi\(status\.role\)/);
+  });
+
+  it("routes peer commands through local ESP-NOW APIs instead of browser peer fetches", () => {
+    const html = readUiFile("index.html");
+    const js = readUiFile("main.js");
+    const firmware = readFileSync(join(root, "firmware/gate/src/main.cpp"), "utf8");
+
+    assert.match(html, /data-peer-command="\/api\/peer\/ping"/);
+    assert.match(html, /data-peer-command="\/api\/peer\/sync"/);
+    assert.match(html, /data-peer-command="\/api\/peer\/calibrate"/);
+    assert.match(html, /data-peer-command="\/api\/peer\/riders\/sync"/);
+    assert.doesNotMatch(html, /id="peerUrl"/);
+    assert.doesNotMatch(js, /fetch\(url,/);
+    assert.match(js, /fetch\(endpoint, \{ method: 'POST' \}\)/);
+    assert.match(firmware, /server\.on\("\/api\/peer\/ping", HTTP_POST, handlePostPeerPing\)/);
+    assert.match(firmware, /server\.on\("\/api\/peer\/sync", HTTP_POST, handlePostPeerSync\)/);
+    assert.match(firmware, /server\.on\("\/api\/peer\/calibrate", HTTP_POST, handlePostPeerCalibrate\)/);
+    assert.match(firmware, /server\.on\("\/api\/peer\/riders\/sync", HTTP_POST, handlePostPeerRidersSync\)/);
+  });
+});

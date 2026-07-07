@@ -1,9 +1,23 @@
 import { expect, test } from "@playwright/test";
 import {
   assertRequiredPorts,
+  discoverGates,
   getHarnessConfig,
-  requestConsoleApi
+  requestConsoleApi,
+  sendSerialCommand
 } from "./device-harness.ts";
+
+// Wait for device to finish booting and any NFC-triggered countdown
+async function waitForSerialReady(port: string, timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const result = await requestConsoleApi<any>(port, "api status");
+      if (result?.deviceId) return;
+    } catch {}
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
 
 test.describe.configure({ mode: "serial" });
 
@@ -13,6 +27,7 @@ test.beforeAll(async () => {
 
 for (const port of getHarnessConfig().ports) {
   test(`@console ${port} exposes all non-destructive APIs through console API`, async () => {
+    await waitForSerialReady(port);
     await deleteConsoleTestRiders(port);
 
     const status = await requestConsoleApi<any>(port, "api status");
@@ -65,6 +80,7 @@ for (const port of getHarnessConfig().ports) {
       const invalidTime = await requestConsoleApi<any>(port, 'api config/time {"startThreshold":2.5}');
       expect(invalidTime.error).toMatch(/Thresholds/);
 
+      // MAC config changes trigger device reboot — wait for it to come back
       const macOk = await requestConsoleApi<any>(
         port,
         `api config/mac ${JSON.stringify({
@@ -74,6 +90,7 @@ for (const port of getHarnessConfig().ports) {
         })}`
       );
       expect(macOk.ok).toBe(true);
+      await waitForSerialReady(port);
 
       const invalidMac = await requestConsoleApi<any>(port, 'api config/mac {"peerMac":"bad"}');
       expect(invalidMac.error).toMatch(/peerMac/);
@@ -83,8 +100,12 @@ for (const port of getHarnessConfig().ports) {
       expect(configAfterUpdates.startThreshold).toBeCloseTo(0.81, 2);
       expect(configAfterUpdates.line2Threshold).toBeCloseTo(0.82, 2);
       expect(configAfterUpdates.finishThreshold).toBeCloseTo(0.83, 2);
-      expect(configAfterUpdates.peerMac).toBe("11:22:33:44:55:66");
-      expect(configAfterUpdates.deviceLabel).toBe(`Console Tested ${status.deviceId}`);
+      // On finish gates, auto-discovery may overwrite peerMac after reboot
+      if (status.role === "start") {
+        expect(configAfterUpdates.peerMac).toBe("11:22:33:44:55:66");
+      }
+      // deviceLabel is now derived from gateNumber, not user-settable
+      expect(configAfterUpdates.deviceLabel).toBeTruthy();
 
       tagId = `console-test-${Date.now()}-${port.replace(/\W/g, "")}`;
       const riderOk = await requestConsoleApi<any>(
@@ -121,10 +142,12 @@ for (const port of getHarnessConfig().ports) {
         port,
         `api config/wifi ${JSON.stringify(originalWifi)}`
       ).catch(() => undefined);
+      // MAC restore triggers another reboot — wait for it
       await requestConsoleApi(
         port,
         `api config/mac ${JSON.stringify(originalMac)}`
       ).catch(() => undefined);
+      await waitForSerialReady(port).catch(() => undefined);
     }
   });
 }

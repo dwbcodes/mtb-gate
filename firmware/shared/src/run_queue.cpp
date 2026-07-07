@@ -55,6 +55,20 @@ bool RunQueue::stampLine2(const String& runId, unsigned long ms) {
   return true;
 }
 
+void RunQueue::removeTerminal() {
+  size_t write = 0;
+  for (size_t read = 0; read < count_; read++) {
+    RunStatus s = runs_[read].status;
+    if (s != RunStatus::Finished && s != RunStatus::TimedOut && s != RunStatus::Cancelled) {
+      if (write != read) {
+        runs_[write] = runs_[read];
+      }
+      write++;
+    }
+  }
+  count_ = write;
+}
+
 RunRecord* RunQueue::at(size_t index) {
   if (index >= count_) {
     return nullptr;

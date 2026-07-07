@@ -14,7 +14,8 @@ enum class RunStatus {
   AwaitingStart,
   OnCourse,
   Finished,
-  TimedOut
+  TimedOut,
+  Cancelled
 };
 
 struct RunRecord {

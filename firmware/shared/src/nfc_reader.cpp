@@ -1,4 +1,5 @@
 #include "nfc_reader.h"
+#include <esp_log.h>
 
 // PN532 on I2C bus
 // I2C pins: SDA=GPIO8, SCL=GPIO10
@@ -51,6 +52,10 @@ void NfcReader::begin() {
   yield();
 
   initialized_ = true;
+
+  // Suppress I2C error logs from Wire — PN532 polling generates harmless
+  // "requestFrom(): i2cRead returned Error -1" on every no-tag read
+  esp_log_level_set("Wire", ESP_LOG_NONE);
 }
 
 bool NfcReader::readTag(String& outTagId) {

@@ -8,17 +8,23 @@
   </head>
   <body>
     <div class="app-shell">
-
-      <aside>
+      <header class="topbar">
         <a href="#results" class="brand" data-page="results">
-          MTB Gate
+          <span>MTB Gate</span>
           <small id="navDeviceId">Loading...</small>
         </a>
+        <div class="topbar-status">
+          <span id="topRole">Unknown gate</span>
+          <strong id="topConnection">Checking...</strong>
+        </div>
+      </header>
+
+      <aside class="app-nav" aria-label="Primary navigation">
         <div class="nav-groups">
           <div class="nav-group">
             <div class="nav-heading">Monitor</div>
             <a href="#results" class="nav-link active" data-page="results">Results</a>
-            <a href="#riders" class="nav-link" data-page="riders">Riders</a>
+            <a href="#riders" class="nav-link" data-page="riders" data-start-only>Riders</a>
           </div>
           <div class="nav-group">
             <div class="nav-heading">Configuration</div>
@@ -29,7 +35,7 @@
           <div class="nav-group">
             <div class="nav-heading">Developer</div>
             <a href="#docs" class="nav-link" data-page="docs">API Docs</a>
-            <a href="#peer-tools" class="nav-link" data-page="peer-tools">Peer Tools</a>
+            <a href="#peer-tools" class="nav-link" data-page="peer-tools" data-start-only>Peer Tools</a>
           </div>
         </div>
       </aside>
@@ -42,6 +48,11 @@
             <p class="kicker">MTB Gate Control Panel</p>
             <h1 id="deviceLabel">Gate Control</h1>
             <p id="deviceRole">Configuration and monitoring</p>
+          </section>
+
+          <section class="notice" id="roleNotice" hidden>
+            <strong>This gate is managed by the Start Gate.</strong>
+            <span>Use this device for status, network setup, and calibration. Register riders and review run control on the Start Gate.</span>
           </section>
 
           <section class="card">
@@ -99,17 +110,17 @@
               </div>
             </div>
             <p style="color: var(--muted); font-size: 0.85em; margin-top: 12px;">
-              This gate is coordinated by the Start Gate. Connect to the Start Gate to change configuration.
+              This gate is managed by the Start Gate. Connect to the Start Gate to change configuration.
             </p>
           </section>
         </div>
 
         <!-- RIDERS PAGE -->
-        <div id="page-riders" class="page">
+        <div id="page-riders" class="page" data-start-only>
           <section class="card">
             <div class="section-head">
               <h2>Rider Registration</h2>
-              <button id="tapNfc" class="btn-primary">📱 Tap NFC</button>
+              <button id="tapNfc" class="btn-primary">Tap NFC</button>
             </div>
             <p style="color: var(--muted); font-size: 0.9em; margin-bottom: 12px;">
               Tap a new NFC tag to register a rider for the day
@@ -160,20 +171,24 @@
           <section class="card" id="sectionDeviceIdentity">
             <h2>Device Configuration</h2>
             <label>
+              <span>Gate Start MAC</span>
+              <input type="text" id="gate1Mac" readonly>
+            </label>
+            <label>
               <span>Gate Number</span>
               <select id="gateNumber">
-                <option value="1">1 — Start</option>
-                <option value="2">2 — Intermediate</option>
-                <option value="3">3 — Intermediate</option>
-                <option value="4">4 — Intermediate</option>
-                <option value="5">5 — Intermediate</option>
-                <option value="6">6 — Intermediate</option>
-                <option value="7">7 — Intermediate</option>
-                <option value="8">8 — Intermediate</option>
-                <option value="9">9 — Intermediate</option>
-                <option value="10">10 — Intermediate</option>
-                <option value="11">11 — Intermediate</option>
-                <option value="12">12 — Finish</option>
+                <option value="1">Gate Start</option>
+                <option value="2">Gate 2</option>
+                <option value="3">Gate 3</option>
+                <option value="4">Gate 4</option>
+                <option value="5">Gate 5</option>
+                <option value="6">Gate 6</option>
+                <option value="7">Gate 7</option>
+                <option value="8">Gate 8</option>
+                <option value="9">Gate 9</option>
+                <option value="10">Gate 10</option>
+                <option value="11">Gate 11</option>
+                <option value="12">Gate Finish</option>
               </select>
             </label>
             <label>
@@ -211,6 +226,17 @@
             <button class="btn-save" id="saveSensorConfig">Save Sensor Settings</button>
             <p id="sensorMessage" style="font-size: 0.85em; margin-top: 8px; color: var(--accent);"></p>
           </section>
+
+          <section class="card">
+            <h2>Auto Calibration</h2>
+            <p style="color: var(--muted); font-size: 0.9em; margin-bottom: 12px;">
+              Current trigger delta: <strong id="currentDelta">--</strong>V above baseline
+            </p>
+            <button class="btn-primary" id="calibrateAllBtn">Calibrate All Gates</button>
+            <div id="calibrationStatus" style="display:none; margin-top: 12px;">
+              <p id="calMessage" style="font-weight: 600; color: var(--accent);"></p>
+            </div>
+          </section>
         </div>
 
         <!-- RESET PAGE -->
@@ -220,25 +246,32 @@
             <p style="color: var(--muted); margin-bottom: 16px;">Caution: these actions affect device operation.</p>
 
             <div class="danger-actions">
-              <button id="rebootBtn" class="btn-danger">🔄 Reboot Device</button>
+              <button id="rebootBtn" class="btn-danger">Reboot Device</button>
               <p style="font-size: 0.85em; color: var(--muted); margin: 8px 0 0;">Restart the device. All settings preserved.</p>
             </div>
 
             <div class="danger-actions">
-              <button id="factoryResetBtn" class="btn-danger btn-critical">⚠️ Factory Reset</button>
+              <button id="factoryResetBtn" class="btn-danger btn-critical">Factory Reset</button>
               <p style="font-size: 0.85em; color: var(--muted); margin: 8px 0 0;">Erase all configuration and riders. Cannot be undone.</p>
             </div>
 
-            <div class="danger-actions">
-              <button id="clearRidersBtn" class="btn-danger">🗑️ Clear All Riders</button>
+            <div class="danger-actions" data-start-only>
+              <button id="clearRidersBtn" class="btn-danger">Clear All Riders</button>
               <p style="font-size: 0.85em; color: var(--muted); margin: 8px 0 0;">Delete all registered riders. Settings preserved.</p>
             </div>
           </section>
 
           <section class="card">
-            <h2>Backup</h2>
-            <button id="downloadConfig" class="btn-test">📥 Download Config (JSON)</button>
+            <h2>Backup &amp; Restore</h2>
+            <button id="downloadConfig" class="btn-test">Download Config (JSON)</button>
             <p style="font-size: 0.85em; color: var(--muted); margin-top: 8px;">Export current configuration for backup or sharing.</p>
+            <div style="margin-top: 16px;">
+              <label class="btn-test file-button">
+                Restore Config (JSON)
+                <input type="file" id="restoreConfigFile" accept=".json" style="display: none;">
+              </label>
+              <p id="restoreMessage" style="font-size: 0.85em; color: var(--accent); margin-top: 8px;"></p>
+            </div>
           </section>
         </div>
 
@@ -248,12 +281,12 @@
             <h2>API Documentation</h2>
             <p style="color: var(--muted); margin-bottom: 4px;">Complete REST API reference for device control and integration.</p>
             <div class="doc-links">
-              <a href="/docs/API.md" target="_blank" class="doc-link">📖 API Overview</a>
-              <a href="/docs/openapi.yaml" target="_blank" class="doc-link">📋 OpenAPI (YAML)</a>
-              <a href="/docs/openapi.json" target="_blank" class="doc-link">📋 OpenAPI (JSON)</a>
-              <a href="/docs/CURL_EXAMPLES.md" target="_blank" class="doc-link">💻 curl Examples</a>
-              <a href="/docs/API_STATUS.md" target="_blank" class="doc-link">📊 Status Endpoint</a>
-              <a href="/docs/API_RIDERS.md" target="_blank" class="doc-link">👥 Riders Endpoint</a>
+              <a href="/docs/API.md" target="_blank" class="doc-link">API Overview</a>
+              <a href="/docs/openapi.yaml" target="_blank" class="doc-link">OpenAPI (YAML)</a>
+              <a href="/docs/openapi.json" target="_blank" class="doc-link">OpenAPI (JSON)</a>
+              <a href="/docs/CURL_EXAMPLES.md" target="_blank" class="doc-link">curl Examples</a>
+              <a href="/docs/API_STATUS.md" target="_blank" class="doc-link">Status Endpoint</a>
+              <a href="/docs/API_RIDERS.md" target="_blank" class="doc-link">Riders Endpoint</a>
             </div>
           </section>
 
@@ -270,57 +303,40 @@
         </div>
 
         <!-- PEER TOOLS PAGE -->
-        <div id="page-peer-tools" class="page">
+        <div id="page-peer-tools" class="page" data-start-only>
           <section class="card">
-            <h2>Send Request to Peer Gate</h2>
+            <h2>Peer Commands</h2>
             <p style="color: var(--muted); font-size: 0.88em; margin-bottom: 4px;">
-              Send HTTP requests to other gates. Both devices must be reachable from your browser
-              (e.g. both on the same station network, or use the AP IP: gate 2 = 192.168.4.2).
+              Commands are sent from the Start Gate to peer gates over ESP-NOW.
             </p>
 
-            <div class="peer-row">
-              <label>
-                <span>Method</span>
-                <select id="peerMethod">
-                  <option value="GET">GET</option>
-                  <option value="POST">POST</option>
-                  <option value="PUT">PUT</option>
-                  <option value="DELETE">DELETE</option>
-                </select>
-              </label>
-              <label>
-                <span>Target URL</span>
-                <input type="url" id="peerUrl" placeholder="http://192.168.4.2/api/status">
-              </label>
+            <div class="status-grid">
+              <div class="status-item">
+                <span>Peer MAC</span>
+                <strong id="peerToolMac">—</strong>
+              </div>
+              <div class="status-item">
+                <span>Peer Status</span>
+                <strong id="peerToolStatus">—</strong>
+              </div>
             </div>
 
-            <label>
-              <span>Request Body (JSON, for POST/PUT)</span>
-              <textarea id="peerBody" rows="4" placeholder='{"key": "value"}'
-                style="resize: vertical;"></textarea>
-            </label>
-
-            <button id="sendPeerRequest" class="btn-test" style="margin-top: 16px;">Send Request</button>
+            <div class="quick-action-grid peer-command-grid">
+              <button class="btn-secondary" data-peer-command="/api/peer/ping">Ping / Discover</button>
+              <button class="btn-secondary" data-peer-command="/api/peer/sync">Clock Sync</button>
+              <button class="btn-secondary" data-peer-command="/api/peer/calibrate">Calibrate Peer</button>
+              <button class="btn-secondary" data-peer-command="/api/peer/riders/sync">Sync Riders</button>
+            </div>
             <pre id="peerResult" style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px;
               overflow-x: auto; font-size: 0.82em; display: none; margin-top: 12px; white-space: pre-wrap;
               word-break: break-all;"></pre>
           </section>
 
           <section class="card">
-            <h2>Quick Actions</h2>
+            <h2>How It Works</h2>
             <p style="color: var(--muted); font-size: 0.88em; margin-bottom: 4px;">
-              Pre-built requests — click to populate the form above, then adjust the URL and send.
+              Your browser only talks to this gate. The Start Gate sends typed commands to peer gates over ESP-NOW, so these tools do not depend on browser CORS or peer HTTP reachability.
             </p>
-            <div class="quick-action-grid">
-              <button class="btn-secondary" onclick="fillPeerForm('GET', '/api/status', '')">GET status</button>
-              <button class="btn-secondary" onclick="fillPeerForm('GET', '/api/riders', '')">GET riders</button>
-              <button class="btn-secondary" onclick="fillPeerForm('POST', '/api/ping', '')">POST ping</button>
-              <button class="btn-secondary" onclick="fillPeerForm('GET', '/api/config', '')">GET config</button>
-              <button class="btn-secondary"
-                onclick="fillPeerForm('PUT', '/api/config/mac', JSON.stringify({gateNumber: 12, peerMac: ''}, null, 2))">
-                PUT gate config
-              </button>
-            </div>
           </section>
         </div>
 

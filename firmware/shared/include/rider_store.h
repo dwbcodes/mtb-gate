@@ -17,6 +17,7 @@ public:
   void save(const RiderEntry& entry);
   bool remove(const String& tagId);
 
+  void clearAll();
   size_t count() const { return count_; }
   RiderEntry* at(size_t index);
 

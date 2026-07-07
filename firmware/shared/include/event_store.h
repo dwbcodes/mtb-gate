@@ -1,0 +1,49 @@
+#pragma once
+
+#include <Arduino.h>
+#include "gate_types.h"
+
+class RiderStore;  // forward declaration
+
+class EventStore {
+public:
+  bool begin(const String& deviceId, uint8_t gateNumber, const String& role);
+
+  // Event logging
+  void logEvent(const String& type, const String& runId = "",
+                const String& riderId = "", unsigned long localMs = 0,
+                long clockOffsetMs = 0);
+  void logRunSummary(const RunRecord& run, bool hadFalseStart);
+  void exportRiders(RiderStore& store);
+
+  // API helpers — return JSON strings
+  String getEventsJson(int limit = 50);
+  String getRunsJson(int limit = 50);
+  String getStorageJson();
+  String getSessionsJson();
+  String getSessionFile(int sessionNum, const String& filename);
+
+  // Storage management
+  void pruneOldSessions(size_t keepCount = 5);
+
+  uint16_t sessionNum() const { return sessionNum_; }
+
+private:
+  String deviceId_;
+  String mac4_;           // last 4 hex chars of MAC for eventId
+  uint16_t sessionNum_;
+  uint32_t seq_;          // monotonic event sequence
+  uint32_t seqAtLastPersist_;
+  String sessionDir_;
+  bool mounted_ = false;
+
+  void appendJsonl(const String& path, const String& line);
+  void writeManifest(uint8_t gateNumber, const String& role);
+  void writeSyncJson();
+  uint32_t loadAndBumpSeq();
+  void persistSeq();
+  String nextEventId();
+
+  // Tail reading helper: returns last N lines from a JSONL file wrapped in JSON array
+  String tailJsonl(const String& path, int limit);
+};

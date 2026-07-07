@@ -1,0 +1,661 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "MTB Gate REST API",
+    "version": "1.0.0",
+    "description": "REST API for MTB timing gate device configuration, status monitoring, and rider management.\nAll endpoints return JSON. Device hosts on its Wi-Fi AP at http://192.168.4.1.\nNo authentication required (closed network)."
+  },
+  "servers": [
+    {
+      "url": "http://192.168.4.1/api",
+      "description": "Gate device API (via local Wi-Fi AP)"
+    }
+  ],
+  "paths": {
+    "/status": {
+      "get": {
+        "summary": "Get device status",
+        "description": "Returns full device status including uptime, MAC, network configuration, and ESP-Now peer connectivity state.",
+        "operationId": "getStatus",
+        "tags": ["Status"],
+        "responses": {
+          "200": {
+            "description": "Device status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceStatus"
+                }
+              }
+            }
+          }
+        },
+        "x-serial-command": "status"
+      }
+    },
+    "/config": {
+      "get": {
+        "summary": "Get device configuration",
+        "description": "Returns full device configuration. Passwords are redacted as \"***\" for security.",
+        "operationId": "getConfig",
+        "tags": ["Configuration"],
+        "responses": {
+          "200": {
+            "description": "Device configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceConfig"
+                }
+              }
+            }
+          }
+        },
+        "x-serial-command": "config"
+      }
+    },
+    "/config/wifi": {
+      "put": {
+        "summary": "Update Wi-Fi configuration",
+        "description": "Update access point SSID/password, station network, and Wi-Fi channel. Device restarts Wi-Fi stack on save.",
+        "operationId": "putConfigWifi",
+        "tags": ["Configuration"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WiFiConfig"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Configuration saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/config/mac": {
+      "put": {
+        "summary": "Update peer MAC and gate role",
+        "description": "Update peer MAC address, gate role, and device label. ESP-Now peer is re-registered immediately.",
+        "operationId": "putConfigMac",
+        "tags": ["Configuration"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MacConfig"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Configuration saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/config/time": {
+      "put": {
+        "summary": "Update sensor thresholds",
+        "description": "Update sensor trip thresholds for start, line 2, and finish triggers. Thresholds are analog voltage levels (0.00–2.00 V).",
+        "operationId": "putConfigTime",
+        "tags": ["Configuration"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TimeConfig"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Configuration saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/riders": {
+      "get": {
+        "summary": "List all riders",
+        "description": "Returns array of all registered riders (max 32 per device).",
+        "operationId": "getRiders",
+        "tags": ["Riders"],
+        "responses": {
+          "200": {
+            "description": "List of riders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RiderEntry"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-serial-command": "riders"
+      },
+      "post": {
+        "summary": "Register or update rider",
+        "description": "Register a new rider or update an existing rider's display name (upsert by tagId).",
+        "operationId": "postRiders",
+        "tags": ["Riders"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RiderInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rider registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RiderResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-serial-command": "riders.add <tagId> <name>"
+      },
+      "delete": {
+        "summary": "Remove rider",
+        "description": "Remove a rider from the roster by tag ID.",
+        "operationId": "deleteRiders",
+        "tags": ["Riders"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RiderDelete"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rider deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Rider not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-serial-command": "riders.del <tagId>"
+      }
+    },
+    "/ping": {
+      "post": {
+        "summary": "Send test ping to peer",
+        "description": "Send a test ping message to the configured peer gate to verify ESP-Now link.",
+        "operationId": "postPing",
+        "tags": ["Diagnostics"],
+        "responses": {
+          "200": {
+            "description": "Ping sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Peer MAC not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-serial-command": "ping"
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "SuccessResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "example": true
+          }
+        },
+        "required": ["ok"]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "example": "Device label is required"
+          }
+        },
+        "required": ["error"]
+      },
+      "DeviceStatus": {
+        "type": "object",
+        "properties": {
+          "deviceId": {
+            "type": "string",
+            "example": "gate-1234",
+            "description": "Unique device ID (auto-generated from MAC)"
+          },
+          "deviceLabel": {
+            "type": "string",
+            "example": "Start Gate",
+            "description": "User-friendly device name"
+          },
+          "role": {
+            "type": "string",
+            "enum": ["start", "finish", "intermediate"],
+            "example": "start",
+            "description": "Gate role"
+          },
+          "mac": {
+            "type": "string",
+            "example": "dc:b4:d9:9c:48:ec",
+            "description": "Device's own MAC address"
+          },
+          "uptimeMs": {
+            "type": "integer",
+            "example": 123456789,
+            "description": "Milliseconds since boot"
+          },
+          "apSsid": {
+            "type": "string",
+            "example": "MTBGate-gate-1234",
+            "description": "Access point SSID"
+          },
+          "apIp": {
+            "type": "string",
+            "example": "192.168.4.1",
+            "description": "Access point IP address"
+          },
+          "staSsid": {
+            "type": "string",
+            "example": "MyNetwork",
+            "description": "Connected station network name (empty if not configured)"
+          },
+          "staIp": {
+            "type": "string",
+            "example": "192.168.1.100",
+            "description": "Station network IP (0.0.0.0 if not connected)"
+          },
+          "espNow": {
+            "type": "object",
+            "properties": {
+              "connected": {
+                "type": "boolean",
+                "example": true,
+                "description": "true if peer heard from in last 60 seconds"
+              },
+              "peerMac": {
+                "type": "string",
+                "example": "0c:4e:a0:66:a4:14",
+                "description": "Configured peer MAC address"
+              },
+              "timeSinceSyncMs": {
+                "type": "integer",
+                "example": 5000,
+                "description": "Milliseconds since last Ping/Pong exchange"
+              },
+              "rttMs": {
+                "type": "integer",
+                "example": 14,
+                "description": "Round-trip latency to peer (start gate only)"
+              },
+              "clockOffsetMs": {
+                "type": "integer",
+                "example": 8,
+                "description": "Time correction vs. start gate (non-start gates only)"
+              },
+              "retries": {
+                "type": "integer",
+                "example": 0,
+                "description": "Current retry count (0 if not retrying)"
+              }
+            },
+            "required": ["connected", "peerMac", "timeSinceSyncMs", "rttMs", "clockOffsetMs", "retries"]
+          }
+        }
+      },
+      "DeviceConfig": {
+        "type": "object",
+        "properties": {
+          "deviceId": {
+            "type": "string",
+            "example": "gate-1234",
+            "description": "Unique device ID (read-only)"
+          },
+          "deviceLabel": {
+            "type": "string",
+            "example": "Start Gate",
+            "description": "User-friendly device name"
+          },
+          "role": {
+            "type": "string",
+            "enum": ["start", "finish", "intermediate"],
+            "example": "start"
+          },
+          "apSsid": {
+            "type": "string",
+            "example": "MTBGate-gate-1234",
+            "minLength": 1,
+            "maxLength": 32
+          },
+          "apPassword": {
+            "type": "string",
+            "example": "***",
+            "description": "Always returned as *** for security"
+          },
+          "staSsid": {
+            "type": "string",
+            "example": "MyNetwork",
+            "maxLength": 32
+          },
+          "staPassword": {
+            "type": "string",
+            "example": "***",
+            "description": "Always returned as *** for security"
+          },
+          "startThreshold": {
+            "type": "number",
+            "format": "float",
+            "example": 0.85,
+            "minimum": 0.0,
+            "maximum": 2.0,
+            "description": "Sensor threshold (volts) for start trigger"
+          },
+          "line2Threshold": {
+            "type": "number",
+            "format": "float",
+            "example": 0.85,
+            "minimum": 0.0,
+            "maximum": 2.0,
+            "description": "Sensor threshold (volts) for line 2 trigger"
+          },
+          "finishThreshold": {
+            "type": "number",
+            "format": "float",
+            "example": 0.85,
+            "minimum": 0.0,
+            "maximum": 2.0,
+            "description": "Sensor threshold (volts) for finish trigger"
+          },
+          "wifiChannel": {
+            "type": "integer",
+            "example": 6,
+            "minimum": 1,
+            "maximum": 13
+          },
+          "peerMac": {
+            "type": "string",
+            "example": "0c:4e:a0:66:a4:14",
+            "pattern": "^([0-9a-fA-F]{2}:){5}([0-9a-fA-F]{2})$|^$",
+            "description": "Peer gate MAC (AA:BB:CC:DD:EE:FF or empty for auto-discover)"
+          }
+        }
+      },
+      "WiFiConfig": {
+        "type": "object",
+        "properties": {
+          "apSsid": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32,
+            "description": "Access point SSID"
+          },
+          "apPassword": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 63,
+            "description": "AP password (empty or >= 8 chars)"
+          },
+          "staSsid": {
+            "type": "string",
+            "maxLength": 32,
+            "description": "Station network SSID (empty = don't join)"
+          },
+          "staPassword": {
+            "type": "string",
+            "maxLength": 63,
+            "description": "Station password (empty or >= 8 chars)"
+          },
+          "wifiChannel": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 13,
+            "description": "Wi-Fi channel (1–13)"
+          }
+        }
+      },
+      "MacConfig": {
+        "type": "object",
+        "properties": {
+          "peerMac": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F]{2}:){5}([0-9a-fA-F]{2})$|^$",
+            "description": "Peer MAC (AA:BB:CC:DD:EE:FF or empty for auto-discover)"
+          },
+          "role": {
+            "type": "string",
+            "enum": ["start", "finish", "intermediate"],
+            "description": "Gate role"
+          },
+          "deviceLabel": {
+            "type": "string",
+            "maxLength": 48,
+            "description": "User-friendly device name"
+          }
+        }
+      },
+      "TimeConfig": {
+        "type": "object",
+        "properties": {
+          "startThreshold": {
+            "type": "number",
+            "format": "float",
+            "minimum": 0.0,
+            "maximum": 2.0,
+            "description": "Sensor threshold (volts) for start trigger"
+          },
+          "line2Threshold": {
+            "type": "number",
+            "format": "float",
+            "minimum": 0.0,
+            "maximum": 2.0,
+            "description": "Sensor threshold (volts) for line 2 trigger"
+          },
+          "finishThreshold": {
+            "type": "number",
+            "format": "float",
+            "minimum": 0.0,
+            "maximum": 2.0,
+            "description": "Sensor threshold (volts) for finish trigger"
+          }
+        }
+      },
+      "RiderEntry": {
+        "type": "object",
+        "properties": {
+          "riderId": {
+            "type": "string",
+            "example": "rider-tag-001",
+            "description": "Unique rider ID (rider-<tagId>, read-only)"
+          },
+          "displayName": {
+            "type": "string",
+            "example": "Dave Wilson",
+            "description": "User-friendly rider name"
+          },
+          "tagId": {
+            "type": "string",
+            "example": "tag-001",
+            "description": "NFC tag ID"
+          }
+        },
+        "required": ["riderId", "displayName", "tagId"]
+      },
+      "RiderInput": {
+        "type": "object",
+        "properties": {
+          "tagId": {
+            "type": "string",
+            "example": "tag-001",
+            "description": "NFC tag ID (unique per rider)"
+          },
+          "displayName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "example": "Dave Wilson",
+            "description": "User-friendly rider name"
+          }
+        },
+        "required": ["tagId", "displayName"]
+      },
+      "RiderDelete": {
+        "type": "object",
+        "properties": {
+          "tagId": {
+            "type": "string",
+            "example": "tag-001",
+            "description": "NFC tag ID to delete"
+          }
+        },
+        "required": ["tagId"]
+      },
+      "RiderResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "example": true
+          },
+          "riderId": {
+            "type": "string",
+            "example": "rider-tag-001",
+            "description": "The created/updated rider ID"
+          }
+        },
+        "required": ["ok", "riderId"]
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Status",
+      "description": "Device status and monitoring"
+    },
+    {
+      "name": "Configuration",
+      "description": "Device configuration (Wi-Fi, sensors, peer)"
+    },
+    {
+      "name": "Riders",
+      "description": "Rider registration and management"
+    },
+    {
+      "name": "Diagnostics",
+      "description": "Testing and debugging"
+    }
+  ]
+}

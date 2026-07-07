@@ -56,6 +56,11 @@ RiderEntry* RiderStore::at(size_t index) {
   return &entries_[index];
 }
 
+void RiderStore::clearAll() {
+  count_ = 0;
+  persist();
+}
+
 bool RiderStore::remove(const String& tagId) {
   for (size_t i = 0; i < count_; i++) {
     if (entries_[i].tagId == tagId) {

@@ -1,5 +1,14 @@
 import { formatMs, formatTime } from "./formatters.js";
 
+export function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 export function renderAttempt(attempt) {
   const reaction = formatMs(attempt.metrics.reactionMs);
   const launch = formatMs(attempt.metrics.launchMs);
@@ -8,15 +17,15 @@ export function renderAttempt(attempt) {
   return `
     <article class="attempt">
       <header>
-        <h3>${attempt.riderName}</h3>
-        <p>${formatTime(attempt.queuedAt)} · ${attempt.runId}</p>
+        <h3>${escapeHtml(attempt.riderName)}</h3>
+        <p>${escapeHtml(formatTime(attempt.queuedAt))} · ${escapeHtml(attempt.runId)}</p>
       </header>
       <dl>
-        <div><dt>Status</dt><dd>${attempt.status}</dd></div>
-        <div><dt>Reaction</dt><dd>${reaction}</dd></div>
-        <div><dt>Launch</dt><dd>${launch}</dd></div>
-        <div><dt>Course</dt><dd>${course}</dd></div>
-        <div><dt>Total</dt><dd>${total}</dd></div>
+        <div><dt>Status</dt><dd>${escapeHtml(attempt.status)}</dd></div>
+        <div><dt>Reaction</dt><dd>${escapeHtml(reaction)}</dd></div>
+        <div><dt>Launch</dt><dd>${escapeHtml(launch)}</dd></div>
+        <div><dt>Course</dt><dd>${escapeHtml(course)}</dd></div>
+        <div><dt>Total</dt><dd>${escapeHtml(total)}</dd></div>
       </dl>
     </article>
   `;
@@ -35,13 +44,13 @@ export function renderRiderCard(rider) {
   return `
     <article class="rider-card">
       <header>
-        <h3>${rider.riderName}</h3>
-        <p>${rider.completedRuns} completed / ${rider.totalRuns} total</p>
+        <h3>${escapeHtml(rider.riderName)}</h3>
+        <p>${escapeHtml(rider.completedRuns)} completed / ${escapeHtml(rider.totalRuns)} total</p>
       </header>
       <dl>
-        <div><dt>Best</dt><dd>${formatMs(rider.bestTotalMs)}</dd></div>
-        <div><dt>Average</dt><dd>${formatMs(rider.averageTotalMs)}</dd></div>
-        <div><dt>Reaction</dt><dd>${formatMs(rider.averageReactionMs)}</dd></div>
+        <div><dt>Best</dt><dd>${escapeHtml(formatMs(rider.bestTotalMs))}</dd></div>
+        <div><dt>Average</dt><dd>${escapeHtml(formatMs(rider.averageTotalMs))}</dd></div>
+        <div><dt>Reaction</dt><dd>${escapeHtml(formatMs(rider.averageReactionMs))}</dd></div>
       </dl>
     </article>
   `;
@@ -50,9 +59,9 @@ export function renderRiderCard(rider) {
 function metricCard(label, value, detail) {
   return `
     <article class="metric-card">
-      <p>${label}</p>
-      <strong>${value}</strong>
-      <span>${detail}</span>
+      <p>${escapeHtml(label)}</p>
+      <strong>${escapeHtml(value)}</strong>
+      <span>${escapeHtml(detail)}</span>
     </article>
   `;
 }

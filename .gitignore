@@ -1,9 +1,14 @@
 node_modules/
 dist/
 .pio/
+firmware/.pio/
+firmware/.platformio-core/
 .vscode/
 coverage/
+test-results/
+playwright-report/
 .DS_Store
+.env
 
 
 # Beads / Dolt files (added by bd init)

@@ -10,7 +10,7 @@ PIO_PROJECT_DIR := firmware
 PLATFORMIO_CORE_DIR ?= $(CURDIR)/firmware/.platformio-core
 PIO := PLATFORMIO_CORE_DIR=$(PLATFORMIO_CORE_DIR) pio
 
-.PHONY: help pio-info embed-ui build upload monitor upload-monitor clean size devices check test test-device attach-usb reattach-upload
+.PHONY: help pio-info embed-ui build upload monitor upload-monitor clean size devices check test test-device test-device-destructive attach-usb reattach-upload erase-flash
 
 help:
 	@echo "MTB Gate - Unified firmware (role and peer MAC configurable via web UI)"
@@ -21,6 +21,7 @@ help:
 	@echo "  make monitor         Open serial monitor on PORT=$(PORT)"
 	@echo "  make reattach-upload Attach USB to WSL, then flash"
 	@echo "  make attach-usb      Attach ESP32 USB device to WSL with usbipd.exe"
+	@echo "  make erase-flash     Erase flash (required after partition table change)"
 	@echo "  make clean           Remove PlatformIO build output"
 	@echo "  make size            Print firmware memory usage"
 	@echo "  make devices         List connected serial devices"
@@ -28,6 +29,7 @@ help:
 	@echo "  make check           Run repo tests and firmware build"
 	@echo "  make test            Run Node-based tests"
 	@echo "  make test-device     Run serial console API tests on /dev/ttyACM0 and /dev/ttyACM1"
+	@echo "  make test-device-destructive Run opt-in destructive topology tests"
 	@echo ""
 	@echo "After flashing both devices:"
 	@echo "  1. Connect to each device's AP (MTBGate-<id>)"
@@ -59,6 +61,17 @@ attach-usb:
 		exit 0; \
 	fi; \
 	exit "$$ATTACH_STATUS"
+
+erase-flash:
+	@ESPTOOL=$(PIO_PROJECT_DIR)/.platformio-core/packages/tool-esptoolpy/esptool.py; \
+	if [[ "$(PORT)" == "/dev/ttyACM0" ]]; then \
+		echo "Erasing flash on /dev/ttyACM0 and /dev/ttyACM1..."; \
+		python3 "$$ESPTOOL" -p /dev/ttyACM0 erase_flash; \
+		sleep 2; \
+		python3 "$$ESPTOOL" -p /dev/ttyACM1 erase_flash; \
+	else \
+		python3 "$$ESPTOOL" -p $(PORT) erase_flash; \
+	fi
 
 pio-info:
 	@$(PIO) system info
@@ -101,22 +114,10 @@ test:
 	@npm test
 
 test-device:
-	@DEVICE_LIST="$$(mktemp)"; \
-	trap 'rm -f "$$DEVICE_LIST"' EXIT; \
-	$(PIO) device list > "$$DEVICE_LIST"; \
-	if ! grep -q '^/dev/ttyACM0$$' "$$DEVICE_LIST"; then \
-		echo "Missing required ESP32 device: /dev/ttyACM0"; \
-		echo ""; \
-		cat "$$DEVICE_LIST"; \
-		exit 1; \
-	fi; \
-	if ! grep -q '^/dev/ttyACM1$$' "$$DEVICE_LIST"; then \
-		echo "Missing required ESP32 device: /dev/ttyACM1"; \
-		echo ""; \
-		cat "$$DEVICE_LIST"; \
-		exit 1; \
-	fi; \
-	MTB_GATE_SERIAL_PORTS=/dev/ttyACM0,/dev/ttyACM1 MTB_GATE_BAUD=$(BAUD) MTB_GATE_VERBOSE_API=1 npm run test:device
+	@npm run test:device
+
+test-device-destructive:
+	@npm run test:device:destructive
 
 check: test
 	@$(MAKE) build

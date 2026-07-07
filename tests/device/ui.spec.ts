@@ -1,10 +1,9 @@
-import { expect, test } from "@playwright/test";
+import { expect, request, test } from "@playwright/test";
 import {
   assertRequiredPorts,
-  connectToGateAp,
+  discoverGates,
   getHarnessConfig,
-  readGateInfo,
-  waitForGateApi
+  type GateInfo
 } from "./device-harness.ts";
 
 test.describe.configure({ mode: "serial" });
@@ -15,10 +14,8 @@ test.beforeAll(async () => {
 
 for (const port of getHarnessConfig().ports) {
   test(`@ui ${port} renders dashboard and quick API checks`, async ({ page }) => {
-    const config = getHarnessConfig();
-    const gate = await readGateInfo(port, config);
-    await connectToGateAp(gate, config);
-    await waitForGateApi(config);
+    const gates = await discoverGates();
+    const gate = gates.find((g) => g.port === port)!;
 
     const pageErrors: string[] = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -28,22 +25,23 @@ for (const port of getHarnessConfig().ports) {
       }
     });
 
-    await page.goto("/");
+    await page.goto(gate.baseUrl + "/");
     await expect(page.getByText("MTB Gate Control Panel")).toBeVisible();
 
-    await page.getByRole("button", { name: "Network" }).click();
-    await page.evaluate(() => (globalThis as any).loadStatus?.());
-    await expect(page.locator("#statusDeviceId")).not.toHaveText("—");
+    // Navigate to Network page via side-nav link
+    await page.getByRole("link", { name: "Network" }).click();
+    await expect(page.locator("#statusDeviceId")).not.toHaveText("—", { timeout: 10000 });
     await expect(page.locator("#statusApSsid")).toHaveText(gate.apSsid);
 
-    await page.getByRole("button", { name: "Documents" }).click();
-    await page.getByRole("button", { name: "Test /api/status" }).click();
+    // Navigate to API Docs page
+    await page.getByRole("link", { name: "API Docs" }).click();
+    await page.getByRole("button", { name: "GET /api/status" }).click();
     await expect(page.locator("#apiTestResult")).toContainText("deviceId");
 
-    await page.getByRole("button", { name: "Test /api/riders" }).click();
+    await page.getByRole("button", { name: "GET /api/riders" }).click();
     await expect(page.locator("#apiTestResult")).toContainText("[");
 
-    await page.getByRole("button", { name: "Test /api/ping" }).click();
+    await page.getByRole("button", { name: "POST /api/ping" }).click();
     await expect(page.locator("#apiTestResult")).toContainText("ok");
 
     expect(pageErrors).toEqual([]);

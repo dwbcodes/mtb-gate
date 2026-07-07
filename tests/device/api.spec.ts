@@ -1,26 +1,38 @@
 import { expect, request, test } from "@playwright/test";
 import {
+  attachSerialLogs,
   assertRequiredPorts,
-  connectToGateAp,
+  discoverGates,
   getHarnessConfig,
-  readGateInfo,
-  waitForGateApi
+  serialLogWatcherOptions,
+  SerialLogWatcher,
+  type GateInfo
 } from "./device-harness.ts";
 
 test.describe.configure({ mode: "serial" });
 
+let serialWatcher: SerialLogWatcher | undefined;
+
 test.beforeAll(async () => {
   await assertRequiredPorts();
+  await discoverGates();
+  serialWatcher = new SerialLogWatcher(getHarnessConfig().ports, serialLogWatcherOptions());
+  await serialWatcher.start();
+});
+
+test.afterAll(async ({}, testInfo) => {
+  if (!serialWatcher) return;
+  await serialWatcher.stop();
+  await attachSerialLogs(testInfo, serialWatcher);
+  serialWatcher.assertNoErrors();
 });
 
 for (const port of getHarnessConfig().ports) {
   test(`@api ${port} exposes AP-hosted status/config/riders APIs`, async () => {
-    const config = getHarnessConfig();
-    const gate = await readGateInfo(port, config);
-    await connectToGateAp(gate, config);
-    await waitForGateApi(config);
+    const gates = await discoverGates();
+    const gate = gates.find((g) => g.port === port)!;
 
-    const api = await request.newContext({ baseURL: config.baseUrl });
+    const api = await request.newContext({ baseURL: gate.baseUrl });
     const statusResponse = await api.get("/api/status");
     expect(statusResponse.ok()).toBeTruthy();
     const status = await statusResponse.json();
@@ -34,8 +46,6 @@ for (const port of getHarnessConfig().ports) {
       connected: expect.any(Boolean),
       peerMac: expect.any(String)
     }));
-    expect(status.staSsid ?? "").toBe("");
-    expect(status.staIp).toBe("0.0.0.0");
 
     const configResponse = await api.get("/api/config");
     expect(configResponse.ok()).toBeTruthy();

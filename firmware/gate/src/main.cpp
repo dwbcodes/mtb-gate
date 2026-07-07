@@ -2,6 +2,7 @@
 #include <HardwareSerial.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <esp_now.h>
 #include <ArduinoJson.h>
 #include "gate_config.h"
 #include "run_queue.h"
@@ -9,12 +10,8 @@
 #include "rider_store.h"
 #include "nfc_reader.h"
 #include "device_ui.h"
-
-#if defined(ARDUINO_USB_CDC_ON_BOOT) && (ARDUINO_USB_CDC_ON_BOOT == 1)
-#define GATE_CONSOLE Serial
-#else
-#define GATE_CONSOLE Serial0
-#endif
+#include "event_store.h"
+#include "gate_log.h"
 
 namespace {
 GateConfigStore configStore;
@@ -40,6 +37,7 @@ SensorGate finishSensor(2.0F);
 WebServer server(80);
 RiderStore riderStore;
 NfcReader nfcReader;
+EventStore eventStore;
 bool nfcInitDone = false;
 unsigned long nfcInitAfterMs = 0;
 
@@ -47,10 +45,64 @@ unsigned long lastLogAt = 0;
 IPAddress apIp;
 IPAddress staIp;
 bool pendingNetworkRestart = false;
+bool pendingReboot = false;
+bool pendingCalibration = false;
+
+// Non-blocking calibration state machine
+enum class CalState : uint8_t { Idle, PeerSent, LocalIdle, LocalPress, Done };
+struct CalibrationContext {
+  CalState state = CalState::Idle;
+  unsigned long phaseStartMs = 0;
+  float idleMin, idleMax, idleSum;
+  int idleCount;
+  float peakV;
+  String phase;
+  String message;
+  String gate;
+  bool success;
+};
+CalibrationContext cal;
 String lastScannedNfcTag = "";
+
+// ESP-Now messaging
+enum class EspNowMsgType : uint8_t {
+  Ping = 1,          // Start→broadcast: discovery + keepalive
+  FinishTrigger = 2, // Finish→start: sensor triggered
+  SyncRequest = 3,   // Start→finish: T1 = start millis()
+  SyncResponse = 4,  // Finish→start: echo T1 + T2 = finish millis()
+  SyncConfirm = 5,   // Start→finish: corrected offset
+  RiderSync = 6,     // Start→broadcast: rider entry (chunked)
+  Calibrate = 7,     // Start→peer: trigger remote calibration
+};
+
+struct __attribute__((packed)) EspNowPayload {
+  EspNowMsgType type;
+  unsigned long timestampMs;   // primary timestamp
+  unsigned long timestampMs2;  // secondary (used for sync)
+};
+
+// Rider sync message — one rider per ESP-Now frame (max 250 bytes)
+struct __attribute__((packed)) RiderSyncMsg {
+  EspNowMsgType type;    // RiderSync
+  uint8_t totalCount;    // total riders being sent (0 = clear all)
+  uint8_t index;         // this rider's index (0-based)
+  char tagId[24];        // null-terminated
+  char displayName[32];  // null-terminated
+};
+
+uint8_t peerMacBytes[6] = {0};
+bool espNowReady = false;
+unsigned long lastPingAt = 0;
+constexpr unsigned long PING_INTERVAL_MS = 10000;
+
+// Clock sync state
+long clockOffsetMs = 0;        // finish gate: add to local millis() to get start-gate time
+bool clockSynced = false;
+unsigned long syncT1 = 0;      // start gate: T1 of pending sync request
 
 // Sensor pin and reading
 constexpr int SENSOR_LINE1_PIN = 0;
+constexpr int BUZZER_PIN = 7;
 constexpr float ADC_MAX = 4095.0F;
 constexpr float ADC_VREF = 3.3F;
 
@@ -60,6 +112,7 @@ constexpr unsigned long PENALTY_MS = 5000;
 String activeRunId = "";
 int lastAnnouncedSecond = -1;
 bool falseStartDetected = false;
+unsigned long falseStartTriggeredAtMs = 0;
 
 float readSensorVoltage(int pin) {
   int raw = analogRead(pin);
@@ -108,58 +161,365 @@ bool sensorTriggered(int pin) {
   return sensorAboveCount >= DEBOUNCE_COUNT;
 }
 
-void runCalibration() {
+// Forward declaration for calibration
+void sendEspNowMsg(EspNowMsgType type, const uint8_t* destMac, unsigned long ts1, unsigned long ts2);
+
+void startCalibration(bool fromStartGate) {
   if (activeRunId.length() > 0) {
-    GATE_CONSOLE.println("[CAL] Cannot calibrate during active run");
+    GateLog::info("CAL", "Cannot calibrate during active run");
+    cal.state = CalState::Done;
+    cal.phase = "done";
+    cal.message = "Cannot calibrate during active run";
+    cal.success = false;
+    cal.phaseStartMs = millis();
     return;
   }
 
-  // Phase 1: Sample idle noise for 3 seconds
-  GATE_CONSOLE.println("[CAL] Phase 1: Sampling idle noise for 3 seconds...");
-  GATE_CONSOLE.println("[CAL] Do NOT touch the tube.");
-  float idleMin = 9.0F, idleMax = 0.0F, idleSum = 0.0F;
-  int idleCount = 0;
-  unsigned long start = millis();
-  while (millis() - start < 3000) {
-    float v = readSensorVoltage(SENSOR_LINE1_PIN);
-    if (v < idleMin) idleMin = v;
-    if (v > idleMax) idleMax = v;
-    idleSum += v;
-    idleCount++;
-    delay(10);
+  if (fromStartGate && config.gateNumber == 1 && espNowReady) {
+    cal.state = CalState::PeerSent;
+    cal.phase = "peer_sent";
+    cal.message = "Calibrating peer gate... Do NOT touch the finish tube.";
+    cal.gate = "finish";
+    GateLog::info("CAL", "Sending calibrate command to peer gate...");
+    sendEspNowMsg(EspNowMsgType::Calibrate, peerMacBytes, 0, 0);
+    cal.phaseStartMs = millis();
+  } else {
+    cal.state = CalState::LocalIdle;
+    cal.phase = "local_idle";
+    cal.gate = (config.gateNumber == 1) ? "start" : "gate-" + String(config.gateNumber);
+    cal.message = String(cal.gate) + ": Do NOT touch the tube (sampling noise)...";
+    cal.idleMin = 9.0F;
+    cal.idleMax = 0.0F;
+    cal.idleSum = 0.0F;
+    cal.idleCount = 0;
+    cal.phaseStartMs = millis();
+    GateLog::info("CAL", "Phase 1: Sampling idle noise for 3 seconds...");
   }
-  float idleAvg = idleSum / idleCount;
-  float noiseRange = idleMax - idleMin;
-  GATE_CONSOLE.println("[CAL] Idle: avg=" + String(idleAvg, 2) + "V min=" + String(idleMin, 2) + "V max=" + String(idleMax, 2) + "V noise=" + String(noiseRange, 2) + "V");
+}
 
-  // Phase 2: Wait for tube press within 5 seconds
-  GATE_CONSOLE.println("[CAL] Phase 2: PRESS the tube now (5 seconds)...");
-  float peakV = 0.0F;
-  start = millis();
-  while (millis() - start < 5000) {
-    float v = readSensorVoltage(SENSOR_LINE1_PIN);
-    if (v > peakV) peakV = v;
-    delay(5);
-  }
-  GATE_CONSOLE.println("[CAL] Peak: " + String(peakV, 2) + "V");
+void updateCalibration() {
+  if (cal.state == CalState::Idle) return;
 
-  float peakDelta = peakV - idleAvg;
-  if (peakDelta < noiseRange * 1.2F) {
-    GATE_CONSOLE.println("[CAL] FAILED - peak not significantly above noise. Press harder or check tube connection.");
+  unsigned long elapsed = millis() - cal.phaseStartMs;
+
+  if (cal.state == CalState::PeerSent) {
+    if (elapsed >= 10000) {
+      GateLog::info("CAL", "Peer calibration window complete. Starting local calibration...");
+      cal.state = CalState::LocalIdle;
+      cal.phase = "local_idle";
+      cal.gate = "start";
+      cal.message = "Start gate: Do NOT touch the tube (sampling noise)...";
+      cal.idleMin = 9.0F;
+      cal.idleMax = 0.0F;
+      cal.idleSum = 0.0F;
+      cal.idleCount = 0;
+      cal.phaseStartMs = millis();
+    } else if (elapsed >= 3000 && elapsed < 8000) {
+      cal.message = "Peer gate: PRESS the finish tube now!";
+    }
     return;
   }
 
-  // Set delta just above noise ceiling (20% margin over half noise range)
-  // With frozen baseline + debounce=3, this is safe
-  float halfNoise = noiseRange / 2.0F;
-  float newDelta = halfNoise * 1.3F;  // just above max noise deviation from average
+  if (cal.state == CalState::LocalIdle) {
+    float v = readSensorVoltage(SENSOR_LINE1_PIN);
+    if (v < cal.idleMin) cal.idleMin = v;
+    if (v > cal.idleMax) cal.idleMax = v;
+    cal.idleSum += v;
+    cal.idleCount++;
 
-  triggerDelta = newDelta;
-  config.triggerDelta = newDelta;
-  config = configStore.save(config);
+    if (elapsed >= 3000) {
+      float idleAvg = cal.idleSum / cal.idleCount;
+      float noiseRange = cal.idleMax - cal.idleMin;
+      GateLog::info("CAL", "Idle: avg=" + String(idleAvg, 2) + "V noise=" + String(noiseRange, 2) + "V");
+      cal.state = CalState::LocalPress;
+      cal.phase = "local_press";
+      cal.message = String(cal.gate) + ": PRESS the tube now!";
+      cal.peakV = 0.0F;
+      cal.phaseStartMs = millis();
+      GateLog::info("CAL", "Phase 2: PRESS the tube now (5 seconds)...");
+    }
+    return;
+  }
 
-  GATE_CONSOLE.println("[CAL] SUCCESS - delta set to " + String(newDelta, 2) + "V (noise=" + String(noiseRange, 2) + "V peak=" + String(peakDelta, 2) + "V above idle)");
-  GATE_CONSOLE.println("[CAL] Trigger threshold = baseline + " + String(newDelta, 2) + "V");
+  if (cal.state == CalState::LocalPress) {
+    float v = readSensorVoltage(SENSOR_LINE1_PIN);
+    if (v > cal.peakV) cal.peakV = v;
+
+    if (elapsed >= 5000) {
+      float idleAvg = cal.idleSum / cal.idleCount;
+      float noiseRange = cal.idleMax - cal.idleMin;
+      float peakDelta = cal.peakV - idleAvg;
+      GateLog::info("CAL", "Peak: " + String(cal.peakV, 2) + "V delta=" + String(peakDelta, 2) + "V");
+
+      if (peakDelta < noiseRange * 1.2F) {
+        GateLog::info("CAL", "FAILED - peak not significantly above noise");
+        cal.message = "FAILED - press harder or check tube connection";
+        cal.success = false;
+      } else {
+        float newDelta = noiseRange * 2.0F;
+        if (newDelta < 0.05F) newDelta = 0.05F;
+        triggerDelta = newDelta;
+        config.triggerDelta = newDelta;
+        config = configStore.save(config);
+        GateLog::info("CAL", "SUCCESS - delta set to " + String(newDelta, 2) + "V");
+        cal.message = "SUCCESS - trigger delta set to " + String(newDelta, 2) + "V";
+        cal.success = true;
+      }
+      cal.state = CalState::Done;
+      cal.phase = "done";
+      cal.phaseStartMs = millis();
+    }
+    return;
+  }
+
+  if (cal.state == CalState::Done) {
+    if (elapsed >= 5000) {
+      cal.state = CalState::Idle;
+      cal.phase = "idle";
+      cal.message = "";
+    }
+  }
+}
+
+// --- ESP-Now helpers ---
+
+bool parseMac(const String& macStr, uint8_t* out) {
+  if (macStr.length() != 17) return false;
+  return sscanf(macStr.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+    &out[0], &out[1], &out[2], &out[3], &out[4], &out[5]) == 6;
+}
+
+void registerEspNowPeer(const uint8_t* mac) {
+  esp_now_peer_info_t peerInfo = {};
+  memcpy(peerInfo.peer_addr, mac, 6);
+  peerInfo.channel = 0;
+  peerInfo.encrypt = false;
+  if (!esp_now_is_peer_exist(mac)) {
+    esp_now_add_peer(&peerInfo);
+  }
+}
+
+void sendEspNowMsg(EspNowMsgType type, const uint8_t* destMac, unsigned long ts1 = 0, unsigned long ts2 = 0) {
+  EspNowPayload payload;
+  payload.type = type;
+  payload.timestampMs = ts1 ? ts1 : millis();
+  payload.timestampMs2 = ts2;
+  esp_now_send(destMac, (uint8_t*)&payload, sizeof(payload));
+}
+
+static const uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+void sendPing() {
+  sendEspNowMsg(EspNowMsgType::Ping, BROADCAST_MAC);
+}
+
+void broadcastRiders() {
+  if (config.role != GateRole::Start) return;
+  uint8_t total = (uint8_t)riderStore.count();
+
+  if (total == 0) {
+    // Send a single message with totalCount=0 to signal "clear all"
+    RiderSyncMsg msg = {};
+    msg.type = EspNowMsgType::RiderSync;
+    msg.totalCount = 0;
+    msg.index = 0;
+    esp_now_send(BROADCAST_MAC, (uint8_t*)&msg, sizeof(msg));
+    GateLog::info("RIDERS", "Broadcast clear (0 riders)");
+    return;
+  }
+
+  for (uint8_t i = 0; i < total; i++) {
+    RiderEntry* entry = riderStore.at(i);
+    if (!entry) continue;
+
+    RiderSyncMsg msg = {};
+    msg.type = EspNowMsgType::RiderSync;
+    msg.totalCount = total;
+    msg.index = i;
+    strncpy(msg.tagId, entry->tagId.c_str(), sizeof(msg.tagId) - 1);
+    strncpy(msg.displayName, entry->displayName.c_str(), sizeof(msg.displayName) - 1);
+
+    esp_now_send(BROADCAST_MAC, (uint8_t*)&msg, sizeof(msg));
+    delay(15);  // small gap between frames to avoid congestion
+  }
+  GateLog::info("RIDERS", "Broadcast " + String(total) + " riders");
+}
+
+void sendSyncRequest() {
+  if (!espNowReady) return;
+  syncT1 = millis();
+  sendEspNowMsg(EspNowMsgType::SyncRequest, peerMacBytes, syncT1);
+  GateLog::info("SYNC", "Request sent (T1=" + String(syncT1) + ")");
+}
+
+void sendEspNowFinishTrigger() {
+  if (!espNowReady) return;
+  // Timestamp is informational only — start gate uses its own millis() on receipt
+  sendEspNowMsg(EspNowMsgType::FinishTrigger, peerMacBytes, millis());
+}
+
+// sendRemoteCalibrate() removed — calibration is now non-blocking via CalibrationContext state machine
+
+// Called on start gate when finish gate reports trigger
+// finishMs = start gate's millis() at time of ESP-Now receipt
+void onFinishReceived(unsigned long finishCorrectedMs) {
+  for (size_t i = 0; i < queue.size(); i++) {
+    RunRecord* run = queue.at(i);
+    if (run && run->status == RunStatus::OnCourse && run->finishTriggeredAtMs == 0) {
+      run->finishTriggeredAtMs = finishCorrectedMs;
+      unsigned long goToFinishMs = finishCorrectedMs - run->goAtMs;
+      unsigned long triggerToFinishMs = finishCorrectedMs - run->startTriggeredAtMs;
+      unsigned long totalMs = goToFinishMs + (falseStartDetected ? PENALTY_MS : 0);
+      GateLog::info("FINISH", "---- Results ----");
+      GateLog::info("FINISH", "  GO to Finish:      " + String(goToFinishMs / 1000.0F, 3) + "s");
+      GateLog::info("FINISH", "  Trigger to Finish: " + String(triggerToFinishMs / 1000.0F, 3) + "s");
+      GateLog::info("FINISH", "  Total:             " + String(totalMs / 1000.0F, 3) + "s" + (falseStartDetected ? " (includes 5.00s penalty)" : ""));
+      GateLog::info("FINISH", "-----------------");
+      eventStore.logEvent("finish_triggered", run->runId, run->riderId, finishCorrectedMs);
+      run->status = RunStatus::Finished;
+      eventStore.logRunSummary(*run, falseStartDetected);
+      eventStore.logEvent("run_completed", run->runId, run->riderId, finishCorrectedMs);
+      falseStartDetected = false;
+      falseStartTriggeredAtMs = 0;
+      return;
+    }
+  }
+  GateLog::info("FINISH", "Received finish trigger but no active run");
+}
+
+void autoRegisterPeer(const uint8_t* mac, const char* macStr) {
+  String senderMac = String(macStr);
+  if (!espNowReady || config.peerMac != senderMac) {
+    config.peerMac = senderMac;
+    memcpy(peerMacBytes, mac, 6);
+    registerEspNowPeer(peerMacBytes);
+    espNowReady = true;
+    config = configStore.save(config);
+  }
+}
+
+void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
+  if (len < 1) return;  // need at least the type byte
+  EspNowMsgType msgType = (EspNowMsgType)data[0];
+
+  // Handle RiderSync before the size check (different struct size)
+  if (msgType == EspNowMsgType::RiderSync && len >= (int)sizeof(RiderSyncMsg)) {
+    if (config.gateNumber == 1) return;  // start gate ignores
+    const RiderSyncMsg* msg = (const RiderSyncMsg*)data;
+
+    if (msg->totalCount == 0) {
+      riderStore.clearAll();
+      eventStore.exportRiders(riderStore);
+      GateLog::info("RIDERS", "Cleared all riders (synced from start)");
+      return;
+    }
+
+    // On first rider (index 0), clear existing to rebuild
+    if (msg->index == 0) {
+      riderStore.clearAll();
+    }
+
+    RiderEntry entry;
+    entry.tagId = String(msg->tagId);
+    entry.displayName = String(msg->displayName);
+    entry.riderId = "rider-" + entry.tagId;
+    riderStore.save(entry);
+
+    if (msg->index == msg->totalCount - 1) {
+      eventStore.exportRiders(riderStore);
+      GateLog::info("RIDERS", "Synced " + String(msg->totalCount) + " riders from start gate");
+    }
+    return;
+  }
+
+  if (len < (int)sizeof(EspNowPayload)) return;
+  const EspNowPayload* payload = (const EspNowPayload*)data;
+
+  char macStr[18];
+  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+  // --- Non-start gate handlers ---
+  if (config.gateNumber != 1) {
+    if (payload->type == EspNowMsgType::Ping) {
+      String senderMac = String(macStr);
+      if (config.peerMac != senderMac) {
+        GateLog::info("ESP-NOW", "Auto-discovered start gate: " + senderMac);
+        config.peerMac = senderMac;
+        memcpy(peerMacBytes, mac, 6);
+        registerEspNowPeer(peerMacBytes);
+        espNowReady = true;
+        config = configStore.save(config);
+        GateLog::info("ESP-NOW", "Peer set to start gate: " + senderMac);
+      }
+      return;
+    }
+
+    if (payload->type == EspNowMsgType::SyncRequest) {
+      // Respond immediately with T1 echoed + our local T2
+      unsigned long T2 = millis();
+      sendEspNowMsg(EspNowMsgType::SyncResponse, mac, payload->timestampMs, T2);
+      return;
+    }
+
+    if (payload->type == EspNowMsgType::SyncConfirm) {
+      // payload->timestampMs = start gate's millis at send
+      // payload->timestampMs2 = RTT in ms
+      unsigned long rttMs = payload->timestampMs2;
+      clockOffsetMs = (long)payload->timestampMs + (long)(rttMs / 2) - (long)millis();
+      clockSynced = true;
+      GateLog::info("SYNC", "Clock synced: offset=" + String(clockOffsetMs) + "ms RTT=" + String(rttMs) + "ms");
+      return;
+    }
+
+    if (payload->type == EspNowMsgType::Calibrate) {
+      GateLog::info("CAL", "Remote calibration requested by start gate");
+      pendingCalibration = true;
+      return;
+    }
+    return;
+  }
+
+  // --- Start gate handlers ---
+  if (payload->type == EspNowMsgType::SyncResponse) {
+    unsigned long T4 = millis();
+    unsigned long T1 = payload->timestampMs;   // our original T1 echoed back
+    unsigned long rttMs = T4 - T1;
+    // Send confirm with our current time and the RTT
+    sendEspNowMsg(EspNowMsgType::SyncConfirm, mac, millis(), rttMs);
+    GateLog::info("SYNC", "Confirmed: RTT=" + String(rttMs) + "ms");
+    return;
+  }
+
+  if (payload->type == EspNowMsgType::FinishTrigger) {
+    GateLog::info("ESP-NOW", "Finish trigger from " + String(macStr));
+    // Stamp with start gate's own millis() — authoritative clock per design.
+    // ESP-Now latency (~5-15ms) is acceptable measurement error.
+    onFinishReceived(millis());
+    autoRegisterPeer(mac, macStr);
+  }
+}
+
+void initEspNow() {
+  if (esp_now_init() != ESP_OK) {
+    GateLog::info("ESP-NOW", "Init failed");
+    return;
+  }
+  esp_now_register_recv_cb(onEspNowRecv);
+
+  // Start gate: register broadcast peer for pings
+  if (config.role == GateRole::Start) {
+    registerEspNowPeer(BROADCAST_MAC);
+  }
+
+  // If we already have a saved peer, register it
+  if (config.peerMac.length() == 17 && parseMac(config.peerMac, peerMacBytes)) {
+    registerEspNowPeer(peerMacBytes);
+    espNowReady = true;
+    GateLog::info("ESP-NOW", "Ready, peer=" + config.peerMac);
+  } else {
+    GateLog::info("ESP-NOW", "Listening for peer...");
+  }
 }
 
 bool hasStaConnection() {
@@ -167,48 +527,27 @@ bool hasStaConnection() {
 }
 
 void printHelp() {
-  GATE_CONSOLE.println("Commands: status | role=start | role=finish | wifi | calibrate");
-  GATE_CONSOLE.println("Console API: api status | api config | api config/wifi <json> | api config/time <json> | api config/mac <json> | api riders | api riders/add <json> | api riders/delete <json> | api ping");
+  GateLog::print("Commands: status | role=start | role=finish | wifi | calibrate");
+  GateLog::print("Console API: api status | api config | api config/wifi <json> | api config/time <json> | api config/mac <json> | api riders | api riders/add <json> | api riders/delete <json> | api ping");
 }
 
 void printStatus() {
-  GATE_CONSOLE.print("Device ");
-  GATE_CONSOLE.print(config.deviceId);
-  GATE_CONSOLE.print(" (");
-  GATE_CONSOLE.print(config.deviceLabel);
-  GATE_CONSOLE.print(")");
-  GATE_CONSOLE.print(" running as ");
-  GATE_CONSOLE.println(gateRoleName(config.role));
-  GATE_CONSOLE.print("AP SSID: ");
-  GATE_CONSOLE.println(config.deviceId);
-  GATE_CONSOLE.print("AP Password: ");
-  GATE_CONSOLE.println(config.apPassword.length() > 0 ? config.apPassword : "<open>");
-  GATE_CONSOLE.print("AP IP: ");
-  GATE_CONSOLE.println(apIp);
-  GATE_CONSOLE.print("MAC: ");
-  GATE_CONSOLE.println(WiFi.macAddress());
-  GATE_CONSOLE.print("STA SSID: ");
-  GATE_CONSOLE.println(config.staSsid.length() > 0 ? config.staSsid : "<not configured>");
-  GATE_CONSOLE.print("STA IP: ");
-  GATE_CONSOLE.println(staIp);
+  GateLog::print("Device " + config.deviceId + " (" + config.deviceLabel + ") running as " + gateRoleName(config.role));
+  GateLog::print("AP SSID: " + config.deviceId);
+  GateLog::print("AP Password: " + String(config.apPassword.length() > 0 ? config.apPassword : "<open>"));
+  GateLog::print("AP IP: " + apIp.toString());
+  GateLog::print("MAC: " + WiFi.macAddress());
+  GateLog::print("STA SSID: " + String(config.staSsid.length() > 0 ? config.staSsid : "<not configured>"));
+  GateLog::print("STA IP: " + staIp.toString());
 }
 
 void printWifiStatus() {
-  GATE_CONSOLE.print("AP network ");
-  GATE_CONSOLE.print(config.deviceId);
-  GATE_CONSOLE.print(" available at http://");
-  GATE_CONSOLE.println(apIp);
-  GATE_CONSOLE.print("AP SSID: ");
-  GATE_CONSOLE.println(config.deviceId);
-  GATE_CONSOLE.print("AP Password: ");
-  GATE_CONSOLE.println(config.apPassword.length() > 0 ? config.apPassword : "<open>");
-  GATE_CONSOLE.print("AP IP: ");
-  GATE_CONSOLE.println(apIp);
+  GateLog::info("WIFI", "AP network " + config.deviceId + " available at http://" + apIp.toString());
+  GateLog::info("WIFI", "AP SSID: " + config.deviceId);
+  GateLog::info("WIFI", "AP Password: " + String(config.apPassword.length() > 0 ? config.apPassword : "<open>"));
+  GateLog::info("WIFI", "AP IP: " + apIp.toString());
   if (config.staSsid.length() > 0 && hasStaConnection()) {
-    GATE_CONSOLE.print("Station network ");
-    GATE_CONSOLE.print(config.staSsid);
-    GATE_CONSOLE.print(" available at http://");
-    GATE_CONSOLE.println(staIp);
+    GateLog::info("WIFI", "Station network " + config.staSsid + " available at http://" + staIp.toString());
   }
 }
 
@@ -272,6 +611,7 @@ static const char* runStatusName(RunStatus s) {
     case RunStatus::OnCourse:      return "OnCourse";
     case RunStatus::Finished:      return "Finished";
     case RunStatus::TimedOut:      return "TimedOut";
+    case RunStatus::Cancelled:     return "Cancelled";
     default:                       return "Unknown";
   }
 }
@@ -305,7 +645,7 @@ String statusJson() {
     entry["status"] = runStatusName(run->status);
     JsonObject metrics = entry["metrics"].to<JsonObject>();
     if (run->goAtMs > 0 && run->startTriggeredAtMs > 0)
-      metrics["reactionMs"] = (long)(run->startTriggeredAtMs - run->goAtMs);
+      metrics["reactionMs"] = (long)run->startTriggeredAtMs - (long)run->goAtMs;
     else
       metrics["reactionMs"] = nullptr;
     if (run->startTriggeredAtMs > 0 && run->line2TriggeredAtMs > 0)
@@ -335,6 +675,7 @@ String configJson() {
   doc["startThreshold"] = config.startThreshold;
   doc["finishThreshold"] = config.finishThreshold;
   doc["line2Threshold"] = config.line2Threshold;
+  doc["triggerDelta"] = config.triggerDelta;
   doc["wifiChannel"] = config.wifiChannel;
   doc["peerMac"] = config.peerMac;
 
@@ -362,8 +703,7 @@ String ridersJson() {
 }
 
 void printApiResponse(const String& payload) {
-  GATE_CONSOLE.print("API ");
-  GATE_CONSOLE.println(payload);
+  GateLog::info("API", payload);
 }
 
 bool payloadHasError(const String& payload) {
@@ -471,23 +811,29 @@ String updateMacConfigFromJson(const String& body) {
 
   GateConfig next = config;
   if (doc["peerMac"].is<String>()) next.peerMac = doc["peerMac"].as<String>();
-  if (doc["role"].is<String>()) next.role = parseGateRole(doc["role"].as<String>());
-  if (doc["deviceLabel"].is<String>()) next.deviceLabel = doc["deviceLabel"].as<String>();
   if (doc["gateNumber"].is<int>()) {
     const int gn = doc["gateNumber"].as<int>();
     if (gn < 1 || gn > 254) {
       return R"({"error":"gateNumber must be 1-254"})";
     }
     next.gateNumber = (uint8_t)gn;
-    next.deviceId = GateConfigStore::buildDeviceId(next.gateNumber);
   }
+  // Always derive deviceId, role, and label from gate number
+  next.deviceId = GateConfigStore::buildDeviceId(next.gateNumber);
+  next.role = (next.gateNumber == 1) ? GateRole::Start
+            : (next.gateNumber == 12) ? GateRole::Finish
+            : GateRole::Intermediate;
+  next.deviceLabel = (next.gateNumber == 1) ? "Gate Start"
+                   : (next.gateNumber == 12) ? "Gate Finish"
+                   : "Gate " + String(next.gateNumber);
 
   if (next.peerMac.length() > 0 && next.peerMac.length() != 17) {
     return R"({"error":"peerMac must be AA:BB:CC:DD:EE:FF format"})";
   }
 
   config = configStore.save(next);
-  return R"({"ok":true})";
+  pendingReboot = true;
+  return R"({"ok":true,"rebooting":true})";
 }
 
 String addRiderFromJson(const String& body) {
@@ -508,6 +854,9 @@ String addRiderFromJson(const String& body) {
   entry.displayName = displayName;
   entry.tagId = tagId;
   riderStore.save(entry);
+  eventStore.logEvent("rider_registered", "", entry.riderId);
+  eventStore.exportRiders(riderStore);
+  broadcastRiders();
   return R"({"ok":true})";
 }
 
@@ -522,12 +871,45 @@ String deleteRiderFromJson(const String& body) {
     return R"({"error":"tagId required"})";
   }
 
-  riderStore.remove(doc["tagId"].as<String>());
+  String removedTagId = doc["tagId"].as<String>();
+  riderStore.remove(removedTagId);
+  eventStore.logEvent("rider_removed", "", "rider-" + removedTagId);
+  eventStore.exportRiders(riderStore);
+  broadcastRiders();
   return R"({"ok":true})";
 }
 
 String pingJson() {
   return R"({"ok":true,"sent":false})";
+}
+
+bool requireStartGateForPeerCommand() {
+  if (config.gateNumber == 1) return true;
+  sendJsonError(409, "Start Gate only");
+  return false;
+}
+
+bool requireEspNowForPeerCommand() {
+  if (espNowReady) return true;
+  sendJsonError(409, "ESP-NOW is not ready");
+  return false;
+}
+
+bool requireConnectedPeerForPeerCommand() {
+  if (config.peerMac.length() == 17) return true;
+  sendJsonError(409, "No ESP-NOW peer connected");
+  return false;
+}
+
+void sendPeerCommandOk(const char* message, bool sent = true) {
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["sent"] = sent;
+  doc["message"] = message;
+  if (config.peerMac.length() > 0) doc["peerMac"] = config.peerMac;
+  String payload;
+  serializeJson(doc, payload);
+  sendJson(200, payload);
 }
 
 void handleRoot() {
@@ -608,11 +990,15 @@ void handleDeleteRiders() {
   }
 
   riderStore.remove(tagId);
+  eventStore.logEvent("rider_removed", "", "rider-" + tagId);
+  eventStore.exportRiders(riderStore);
+  broadcastRiders();
   sendJson(200, R"({"ok":true})");
 }
 
 void handlePostReboot() {
   sendJson(200, R"({"ok":true})");
+  GateLog::info("REBOOT", "Reboot requested via API");
   delay(500);
   ESP.restart();
 }
@@ -622,13 +1008,69 @@ void handlePostCalibrate() {
     sendJsonError(405, "Method not allowed");
     return;
   }
-  sendJson(200, R"({"ok":true,"message":"Calibration started - watch serial output"})");
-  delay(100);
-  runCalibration();
+  if (cal.state != CalState::Idle) {
+    sendJsonError(409, "Calibration already in progress");
+    return;
+  }
+  startCalibration(true);
+  sendJson(200, R"({"ok":true,"message":"Calibration started"})");
+}
+
+void handleGetCalibrateStatus() {
+  JsonDocument doc;
+  doc["phase"] = cal.phase.length() ? cal.phase : "idle";
+  doc["message"] = cal.message.length() ? cal.message : "Ready to calibrate";
+  doc["gate"] = cal.gate.length() ? cal.gate : "";
+  doc["triggerDelta"] = config.triggerDelta;
+  if (cal.state == CalState::Done) doc["success"] = cal.success;
+  String out;
+  serializeJson(doc, out);
+  sendJson(200, out);
 }
 
 void handlePostPing() {
   sendEmptyBodyOperation(HTTP_POST, pingJson);
+}
+
+void handlePostPeerPing() {
+  if (server.method() != HTTP_POST) {
+    sendJsonError(405, "Method not allowed");
+    return;
+  }
+  if (!requireStartGateForPeerCommand() || !requireEspNowForPeerCommand()) return;
+  sendPing();
+  sendPeerCommandOk("ESP-NOW discovery ping broadcast");
+}
+
+void handlePostPeerSync() {
+  if (server.method() != HTTP_POST) {
+    sendJsonError(405, "Method not allowed");
+    return;
+  }
+  if (!requireStartGateForPeerCommand() || !requireEspNowForPeerCommand() || !requireConnectedPeerForPeerCommand()) return;
+  sendSyncRequest();
+  sendPeerCommandOk("ESP-NOW clock sync request sent");
+}
+
+void handlePostPeerCalibrate() {
+  if (server.method() != HTTP_POST) {
+    sendJsonError(405, "Method not allowed");
+    return;
+  }
+  if (!requireStartGateForPeerCommand() || !requireEspNowForPeerCommand() || !requireConnectedPeerForPeerCommand()) return;
+  sendEspNowMsg(EspNowMsgType::Calibrate, peerMacBytes);
+  GateLog::info("CAL", "Remote calibration command sent via peer API");
+  sendPeerCommandOk("ESP-NOW peer calibration command sent");
+}
+
+void handlePostPeerRidersSync() {
+  if (server.method() != HTTP_POST) {
+    sendJsonError(405, "Method not allowed");
+    return;
+  }
+  if (!requireStartGateForPeerCommand() || !requireEspNowForPeerCommand()) return;
+  broadcastRiders();
+  sendPeerCommandOk("ESP-NOW rider roster sync broadcast");
 }
 
 void handleNfcStartListen() {
@@ -720,6 +1162,66 @@ void handleI2cScan() {
 }
 
 
+void handleGetEvents() {
+  int limit = 50;
+  if (server.hasArg("limit")) limit = server.arg("limit").toInt();
+  if (limit < 1) limit = 1;
+  if (limit > 50) limit = 50;
+  sendJson(200, eventStore.getEventsJson(limit));
+}
+
+void handleGetRuns() {
+  int limit = 50;
+  if (server.hasArg("limit")) limit = server.arg("limit").toInt();
+  if (limit < 1) limit = 1;
+  if (limit > 50) limit = 50;
+  sendJson(200, eventStore.getRunsJson(limit));
+}
+
+void handleGetStorage() {
+  sendJson(200, eventStore.getStorageJson());
+}
+
+void handleGetSessions() {
+  sendJson(200, eventStore.getSessionsJson());
+}
+
+void handleGetSessionFile() {
+  // URL: /api/sessions/<num>/<filename>
+  // WebServer doesn't support path params, so we use query params
+  if (!server.hasArg("num") || !server.hasArg("file")) {
+    sendJsonError(400, "num and file query params required");
+    return;
+  }
+  int num = server.arg("num").toInt();
+  String filename = server.arg("file");
+
+  // Only allow safe filenames
+  if (filename != "events.jsonl" && filename != "runs.jsonl" &&
+      filename != "manifest.json" && filename != "sync.json") {
+    sendJsonError(400, "Invalid filename");
+    return;
+  }
+
+  String content = eventStore.getSessionFile(num, filename);
+  if (content.length() == 0) {
+    sendJsonError(404, "File not found");
+    return;
+  }
+
+  String contentType = filename.endsWith(".json") ? "application/json" : "application/x-ndjson";
+  server.send(200, contentType, content);
+}
+
+void handlePostPrune() {
+  if (server.method() != HTTP_POST) {
+    sendJsonError(405, "Method not allowed");
+    return;
+  }
+  eventStore.pruneOldSessions(5);
+  sendJson(200, eventStore.getStorageJson());
+}
+
 void configureWebServer() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/styles.css", HTTP_GET, handleStylesCss);
@@ -735,9 +1237,22 @@ void configureWebServer() {
   server.on("/api/riders", HTTP_POST, handlePostRiders);
   server.on("/api/riders", HTTP_DELETE, handleDeleteRiders);
   server.on("/api/ping", HTTP_POST, handlePostPing);
+  server.on("/api/peer/ping", HTTP_POST, handlePostPeerPing);
+  server.on("/api/peer/sync", HTTP_POST, handlePostPeerSync);
+  server.on("/api/peer/calibrate", HTTP_POST, handlePostPeerCalibrate);
+  server.on("/api/peer/riders/sync", HTTP_POST, handlePostPeerRidersSync);
   server.on("/api/reboot", HTTP_POST, handlePostReboot);
   server.on("/api/calibrate", HTTP_POST, handlePostCalibrate);
+  server.on("/api/calibrate/status", HTTP_GET, handleGetCalibrateStatus);
   
+  // Event/storage endpoints
+  server.on("/api/events", HTTP_GET, handleGetEvents);
+  server.on("/api/runs", HTTP_GET, handleGetRuns);
+  server.on("/api/storage", HTTP_GET, handleGetStorage);
+  server.on("/api/sessions", HTTP_GET, handleGetSessions);
+  server.on("/api/sessions/file", HTTP_GET, handleGetSessionFile);
+  server.on("/api/storage/prune", HTTP_POST, handlePostPrune);
+
   // NFC endpoints
   server.on("/api/nfc/listen", HTTP_POST, handleNfcStartListen);
   server.on("/api/nfc/tag", HTTP_GET, handleNfcGetTag);
@@ -798,6 +1313,16 @@ void handleSerialCommand(const String& rawCommand) {
     return;
   }
 
+  if (command.equalsIgnoreCase("api runs")) {
+    printApiResponse(eventStore.getRunsJson(10));
+    return;
+  }
+
+  if (command.equalsIgnoreCase("api storage")) {
+    printApiResponse(eventStore.getStorageJson());
+    return;
+  }
+
   if (command.equalsIgnoreCase("status")) {
     printStatus();
     return;
@@ -806,21 +1331,27 @@ void handleSerialCommand(const String& rawCommand) {
   if (command.equalsIgnoreCase("role=start")) {
     config.role = GateRole::Start;
     config = configStore.save(config);
-    GATE_CONSOLE.println("Saved role=start.");
-    printStatus();
+    GateLog::print("Saved role=start. Rebooting...");
+    delay(500);
+    ESP.restart();
     return;
   }
 
   if (command.equalsIgnoreCase("role=finish")) {
     config.role = GateRole::Finish;
     config = configStore.save(config);
-    GATE_CONSOLE.println("Saved role=finish.");
-    printStatus();
+    GateLog::print("Saved role=finish. Rebooting...");
+    delay(500);
+    ESP.restart();
     return;
   }
 
   if (command.equalsIgnoreCase("calibrate")) {
-    runCalibration();
+    if (cal.state != CalState::Idle) {
+      GateLog::info("CAL", "Calibration already in progress");
+      return;
+    }
+    startCalibration(true);
     return;
   }
 
@@ -828,10 +1359,10 @@ void handleSerialCommand(const String& rawCommand) {
     String tagId = command.substring(5);
     tagId.trim();
     if (tagId.length() > 0) {
-      GATE_CONSOLE.println("[SERIAL] Simulated NFC scan: " + tagId);
+      GateLog::info("SERIAL", "Simulated NFC scan: " + tagId);
       startRunForRider(tagId);
     } else {
-      GATE_CONSOLE.println("Usage: scan=<tagId>");
+      GateLog::print("Usage: scan=<tagId>");
     }
     return;
   }
@@ -852,11 +1383,24 @@ void startRunForRider(const String& tagId) {
     if (e && e->tagId == tagId) { rider = e; break; }
   }
   if (!rider) {
-    GATE_CONSOLE.println("[RUN] Unknown tag " + tagId + " - register rider first");
+    GateLog::info("RUN", "Unknown tag " + tagId + " - register rider first");
     return;
   }
   if (activeRunId.length() > 0) {
-    GATE_CONSOLE.println("[RUN] Run already active, ignoring scan");
+    // Same rider re-scans → cancel their active run
+    RunRecord* activeRun = queue.find(activeRunId);
+    if (activeRun && activeRun->riderId == rider->riderId) {
+      GateLog::info("RUN", "Rider " + rider->displayName + " re-scanned - cancelling run");
+      activeRun->status = RunStatus::Cancelled;
+      eventStore.logEvent("run_cancelled", activeRunId, rider->riderId, millis());
+      activeRunId = "";
+      falseStartDetected = false;
+      falseStartTriggeredAtMs = 0;
+      noTone(BUZZER_PIN);
+      unfreezeBaseline();
+      return;
+    }
+    GateLog::info("RUN", "Run already active for another rider, ignoring scan");
     return;
   }
 
@@ -873,15 +1417,22 @@ void startRunForRider(const String& tagId) {
   run.finishTriggeredAtMs = 0;
 
   if (!queue.enqueue(run)) {
-    GATE_CONSOLE.println("[RUN] Queue full");
+    GateLog::info("RUN", "Queue full");
     return;
   }
 
   activeRunId = run.runId;
   lastAnnouncedSecond = -1;
   falseStartDetected = false;
+  falseStartTriggeredAtMs = 0;
   sensorAboveCount = 0;
-  GATE_CONSOLE.println("[RUN] Rider " + rider->displayName + " scanned - starting countdown");
+
+  eventStore.logEvent("run_created", run.runId, rider->riderId, millis());
+
+  // Sync clocks with finish gate before countdown
+  sendSyncRequest();
+
+  GateLog::info("RUN", "Rider " + rider->displayName + " scanned - starting countdown");
 }
 
 void handleStartGateLoop(unsigned long now) {
@@ -895,7 +1446,8 @@ void handleStartGateLoop(unsigned long now) {
     queue.updateStatus(run->runId, RunStatus::Countdown, now);
     freezeBaseline();
     lastAnnouncedSecond = COUNTDOWN_SECONDS;
-    GATE_CONSOLE.println("[RUN] Countdown: " + String(COUNTDOWN_SECONDS));
+    eventStore.logEvent("countdown_started", run->runId, run->riderId, now);
+    GateLog::info("RUN", "Countdown: " + String(COUNTDOWN_SECONDS));
     return;
   }
 
@@ -907,23 +1459,41 @@ void handleStartGateLoop(unsigned long now) {
     if (secondsLeft >= 0 && secondsLeft != lastAnnouncedSecond) {
       lastAnnouncedSecond = secondsLeft;
       if (secondsLeft > 0) {
-        GATE_CONSOLE.println("[RUN] Countdown: " + String(secondsLeft));
+        GateLog::info("RUN", "Countdown: " + String(secondsLeft));
+      }
+      switch (secondsLeft) {
+        case 10: tone(BUZZER_PIN, 500, 500); break;
+        case 5:  tone(BUZZER_PIN, 800, 300); break;
+        case 3: case 2: case 1: tone(BUZZER_PIN, 1000, 200); break;
       }
     }
 
     // Only check false start in final 3 seconds (rider should be in position)
     if (!falseStartDetected && secondsLeft <= 3 && sensorTriggered(SENSOR_LINE1_PIN)) {
       falseStartDetected = true;
-      GATE_CONSOLE.println("[RUN] FALSE START! 5 second penalty");
+      falseStartTriggeredAtMs = now;
+      eventStore.logEvent("false_start", run->runId, run->riderId, now);
+      GateLog::info("RUN", "FALSE START! 5 second penalty");
     }
 
     // Countdown complete
     if (elapsed >= (unsigned long)COUNTDOWN_SECONDS * 1000UL) {
-      queue.updateStatus(run->runId, RunStatus::AwaitingStart, now);
+      eventStore.logEvent("go", run->runId, run->riderId, now);
       if (falseStartDetected) {
-        GATE_CONSOLE.println("[RUN] GO! (5s penalty will be added)");
+        // Rider already crossed the line — go straight to OnCourse
+        queue.updateStatus(run->runId, RunStatus::AwaitingStart, now);
+        queue.updateStatus(run->runId, RunStatus::OnCourse, now);
+        if (falseStartTriggeredAtMs > 0) {
+          run->startTriggeredAtMs = falseStartTriggeredAtMs;
+        }
+        GateLog::info("RUN", "GO! FALSE START - Reaction: 5.00s (penalty)");
+        GateLog::info("RUN", "On course - waiting for finish gate...");
+        tone(BUZZER_PIN, 1500, 3000);
+        unfreezeBaseline();
       } else {
-        GATE_CONSOLE.println("[RUN] GO!");
+        queue.updateStatus(run->runId, RunStatus::AwaitingStart, now);
+        GateLog::info("RUN", "GO!");
+        tone(BUZZER_PIN, 1500, 3000);
       }
     }
     return;
@@ -933,48 +1503,96 @@ void handleStartGateLoop(unsigned long now) {
   if (run->status == RunStatus::AwaitingStart) {
     if (sensorTriggered(SENSOR_LINE1_PIN)) {
       queue.updateStatus(run->runId, RunStatus::OnCourse, now);
+      eventStore.logEvent("start_triggered", run->runId, run->riderId, now);
       unsigned long reactionMs = run->startTriggeredAtMs - run->goAtMs;
-      if (falseStartDetected) {
-        reactionMs += PENALTY_MS;
-        GATE_CONSOLE.println("[RUN] TRIGGERED - Reaction: " + String(reactionMs) + "ms (includes 5000ms penalty)");
-      } else {
-        GATE_CONSOLE.println("[RUN] TRIGGERED - Reaction: " + String(reactionMs) + "ms");
-      }
-      activeRunId = "";
+      GateLog::info("RUN", "TRIGGERED - Reaction: " + String(reactionMs / 1000.0F, 3) + "s");
+      GateLog::info("RUN", "On course - waiting for finish gate...");
       unfreezeBaseline();
     }
     return;
   }
+
+  // OnCourse → waiting for finish gate (handled by onFinishReceived callback)
+  if (run->status == RunStatus::OnCourse) {
+    return;
+  }
+
+  // Finished → clear active run and clean up queue
+  if (run->status == RunStatus::Finished) {
+    noTone(BUZZER_PIN);
+    activeRunId = "";
+    queue.removeTerminal();
+    return;
+  }
+
+  // Cancelled → clean up
+  if (run->status == RunStatus::Cancelled) {
+    activeRunId = "";
+    queue.removeTerminal();
+    return;
+  }
 }
 
+bool finishTriggered = false;
+unsigned long finishCooldownUntil = 0;
+constexpr unsigned long FINISH_COOLDOWN_MS = 5000;  // 5s lockout after trigger
+
 void handleFinishGateLoop() {
-  if (finishSensor.isTriggered(0.93F)) {
-    GATE_CONSOLE.println("Finish trigger sample accepted");
+  if (finishTriggered) {
+    if (millis() > finishCooldownUntil) {
+      finishTriggered = false;
+      sensorAboveCount = 0;
+      unfreezeBaseline();
+      GateLog::info("FINISH", "Ready for next trigger");
+    }
+    return;  // Skip ALL sensor reads during cooldown
+  }
+
+  if (sensorTriggered(SENSOR_LINE1_PIN)) {
+    GateLog::info("FINISH", "Sensor triggered - sending to start gate");
+    sendEspNowFinishTrigger();
+    eventStore.logEvent("finish_sensor", "", "", millis(), clockOffsetMs);
+    finishTriggered = true;
+    finishCooldownUntil = millis() + FINISH_COOLDOWN_MS;
+    sensorAboveCount = 0;
+    freezeBaseline();
   }
 }
 
 void setup() {
-  GATE_CONSOLE.begin(115200);
+  GateLog::begin(115200);
   delay(250);
 
+  GateLog::raw("");
+  GateLog::raw("========================================");
+  GateLog::raw("[BOOT] MTB Gate starting...");
+  GateLog::raw("========================================");
+
   config = configStore.load();
+  GateLog::setHost(config.deviceId);
 
   riderStore.loadAll();
+  eventStore.begin(config.deviceId, config.gateNumber, gateRoleName(config.role));
+  eventStore.exportRiders(riderStore);
   applySensorThresholds();
   triggerDelta = config.triggerDelta;
   pinMode(SENSOR_LINE1_PIN, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
   // Seed baseline with initial readings
   for (int i = 0; i < BASELINE_SAMPLES; i++) {
     baselineBuffer[i] = readSensorVoltage(SENSOR_LINE1_PIN);
     delay(5);
   }
   baselineFilled = true;
-  GATE_CONSOLE.println("[SENSOR] GPIO" + String(SENSOR_LINE1_PIN) + " baseline=" + String(getBaseline(), 2) + "V delta=" + String(triggerDelta, 2) + "V");
+  GateLog::info("SENSOR", "GPIO" + String(SENSOR_LINE1_PIN) + " baseline=" + String(getBaseline(), 2) + "V delta=" + String(triggerDelta, 2) + "V");
   startWifi();
+  initEspNow();
   configureWebServer();
   nfcInitAfterMs = millis() + 2000;
 
-  GATE_CONSOLE.println("Unified gate firmware ready");
+  GateLog::raw("========================================");
+  GateLog::info("BOOT", "MTB Gate ready");
+  GateLog::raw("========================================");
   printStatus();
   printWifiStatus();
   printHelp();
@@ -985,9 +1603,9 @@ void loop() {
     nfcInitDone = true;
     nfcReader.begin();
     if (nfcReader.isInitialized()) {
-      GATE_CONSOLE.println("[NFC] Reader initialized successfully");
+      GateLog::info("NFC", "Reader initialized successfully");
     } else {
-      GATE_CONSOLE.println("[NFC] Reader not detected - check wiring SDA=GPIO8 SCL=GPIO10");
+      GateLog::info("NFC", "Reader not detected - check wiring SDA=GPIO8 SCL=GPIO10");
     }
   }
 
@@ -998,7 +1616,7 @@ void loop() {
     String tagId;
     if (nfcReader.readTag(tagId)) {
       lastScannedNfcTag = tagId;
-      GATE_CONSOLE.println("[NFC] Tag scanned: " + tagId);
+      GateLog::info("NFC", "Tag scanned: " + tagId);
       startRunForRider(tagId);
     }
   }
@@ -1011,10 +1629,17 @@ void loop() {
     }
   }
 
-  if (GATE_CONSOLE.available() > 0) {
-    handleSerialCommand(GATE_CONSOLE.readStringUntil('\n'));
+  if (GateLog::available()) {
+    handleSerialCommand(GateLog::readLine());
   }
   server.handleClient();
+
+  if (pendingReboot) {
+    pendingReboot = false;
+    GateLog::info("REBOOT", "Config changed, rebooting...");
+    delay(500);
+    ESP.restart();
+  }
 
   if (pendingNetworkRestart) {
     pendingNetworkRestart = false;
@@ -1022,14 +1647,36 @@ void loop() {
     restartNetworking();
   }
 
+  if (pendingCalibration) {
+    pendingCalibration = false;
+    startCalibration(false);
+  }
+
+  updateCalibration();
+
   const unsigned long now = millis();
-  // Poll at 100ms during active run for responsive sensor detection, 1s otherwise
-  const unsigned long intervalMs = (config.role == GateRole::Start && activeRunId.length() > 0) ? 100 : 1000;
+  // Poll at 100ms during active run or on finish gate for responsive sensor detection
+  const bool fastPoll = (config.role == GateRole::Start && activeRunId.length() > 0) ||
+                         config.role != GateRole::Start;
+  const unsigned long intervalMs = fastPoll ? 100 : 1000;
   if (now - lastLogAt < intervalMs) {
     return;
   }
 
   lastLogAt = now;
+
+  // Start gate: broadcast ping every 10s for auto-discovery
+  if (config.role == GateRole::Start && now - lastPingAt >= PING_INTERVAL_MS) {
+    lastPingAt = now;
+    sendPing();
+    // Sync riders every 5th ping (~50s) so late-joining gates get the list
+    static uint8_t pingCount = 0;
+    if (++pingCount >= 5) {
+      pingCount = 0;
+      broadcastRiders();
+    }
+  }
+
   if (config.role == GateRole::Start) {
     handleStartGateLoop(now);
     return;

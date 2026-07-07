@@ -1,6 +1,6 @@
 import { loadAttempts } from "./src/data-client.js";
 import { buildMetrics, buildRiderSummary } from "./src/metrics.js";
-import { renderAttempt, renderMetrics, renderRiderCard } from "./src/renderers.js";
+import { escapeHtml, renderAttempt, renderMetrics, renderRiderCard } from "./src/renderers.js";
 
 const dateInput = document.querySelector("#date");
 const riderInput = document.querySelector("#riderId");
@@ -19,9 +19,9 @@ loadResults();
 async function loadResults() {
   statusEl.textContent = "Loading…";
   attemptMetaEl.textContent = "Loading…";
-  metricsEl.innerHTML = "";
-  summaryEl.innerHTML = "";
-  resultsEl.innerHTML = "";
+  metricsEl.replaceChildren();
+  summaryEl.replaceChildren();
+  resultsEl.replaceChildren();
 
   try {
     const attempts = await loadAttempts({
@@ -40,7 +40,6 @@ async function loadResults() {
     const message = error instanceof Error ? error.message : "Unknown error";
     statusEl.textContent = "Unable to load results";
     attemptMetaEl.textContent = "Check API connectivity";
-    summaryEl.innerHTML = `<p class="empty">Could not load today’s metrics: ${message}</p>`;
+    summaryEl.innerHTML = `<p class="empty">Could not load today’s metrics: ${escapeHtml(message)}</p>`;
   }
 }
-

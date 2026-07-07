@@ -12,7 +12,6 @@ GateConfig GateConfigStore::load() {
   const uint8_t rawGateNumber = preferences.getUChar(kGateNumberKey, 1);
   const uint8_t storedGateNumber = rawGateNumber > 0 ? rawGateNumber : 1;
   const String deviceId = buildDeviceId(storedGateNumber);
-  const String storedLabel = preferences.getString(kDeviceLabelKey, defaultDeviceLabel(storedGateNumber));
   const String storedApPassword = preferences.getString(kApPasswordKey, "changeme123");
   const String storedStaSsid = preferences.getString(kStaSsidKey, "");
   const String storedStaPassword = preferences.getString(kStaPasswordKey, "");
@@ -21,13 +20,20 @@ GateConfig GateConfigStore::load() {
   const float storedLine2Threshold = preferences.getFloat(kLine2ThresholdKey, 2.0F);
   const float storedTriggerDelta = preferences.getFloat(kTriggerDeltaKey, 0.3F);
   const uint8_t storedWifiChannel = preferences.getUChar(kWifiChannelKey, 1);
-  const String storedRole = preferences.getString(kRoleKey, "start");
   const String storedPeerMac = preferences.getString(kPeerMacKey, "");
   preferences.end();
 
+  // Role is derived from gate number — gate 1 = Start, gate 12 = Finish, else Intermediate
+  GateRole derivedRole = (storedGateNumber == 1) ? GateRole::Start
+                       : (storedGateNumber == 12) ? GateRole::Finish
+                       : GateRole::Intermediate;
+
+  // Label: regenerate from gate number to stay in sync with naming convention
+  String label = defaultDeviceLabel(storedGateNumber);
+
   return {
     deviceId,
-    storedLabel,
+    label,
     storedApPassword,
     storedStaSsid,
     storedStaPassword,
@@ -36,7 +42,7 @@ GateConfig GateConfigStore::load() {
     storedLine2Threshold,
     storedTriggerDelta,
     storedWifiChannel,
-    parseGateRole(storedRole),
+    derivedRole,
     storedPeerMac,
     storedGateNumber
   };
@@ -70,12 +76,20 @@ String GateConfigStore::buildDeviceId(uint8_t gateNumber) {
   const uint8_t b3 = (mac >> 24) & 0xFF;
   const uint8_t b4 = (mac >> 32) & 0xFF;
   const uint8_t b5 = (mac >> 40) & 0xFF;
-  char buffer[24];
-  snprintf(buffer, sizeof(buffer), "Gate-%d-%02x%02x%02x%02x%02x%02x",
-    gateNumber, b0, b1, b2, b3, b4, b5);
+  char buffer[32];
+  const char* suffix = (gateNumber == 1) ? "Start" : (gateNumber == 12) ? "Finish" : nullptr;
+  if (suffix) {
+    snprintf(buffer, sizeof(buffer), "Gate-%s-%02x%02x%02x%02x%02x%02x",
+      suffix, b0, b1, b2, b3, b4, b5);
+  } else {
+    snprintf(buffer, sizeof(buffer), "Gate-%d-%02x%02x%02x%02x%02x%02x",
+      gateNumber, b0, b1, b2, b3, b4, b5);
+  }
   return String(buffer);
 }
 
 String GateConfigStore::defaultDeviceLabel(uint8_t gateNumber) {
-  return "Gate " + String(gateNumber);  // 1-based: Gate 1, Gate 2, ...
+  if (gateNumber == 1) return "Gate Start";
+  if (gateNumber == 12) return "Gate Finish";
+  return "Gate " + String(gateNumber);
 }

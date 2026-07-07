@@ -10,6 +10,7 @@ public:
   bool enqueue(const RunRecord& run);
   bool updateStatus(const String& runId, RunStatus status, unsigned long eventMs);
   bool stampLine2(const String& runId, unsigned long ms);
+  void removeTerminal();  // Remove Finished/TimedOut/Cancelled runs
   RunRecord* find(const String& runId);
   RunRecord* at(size_t index);
   size_t size() const;
