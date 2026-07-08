@@ -64,6 +64,8 @@ struct CalibrationContext {
 };
 CalibrationContext cal;
 String lastScannedNfcTag = "";
+String observedNfcTag = "";
+bool nfcTagPresent = false;
 
 // ESP-Now messaging
 enum class EspNowMsgType : uint8_t {
@@ -105,27 +107,39 @@ unsigned long lastSyncAtMs = 0; // start gate: when last sync completed
 
 // Sensor pin and reading
 constexpr int SENSOR_LINE1_PIN = 0;
-constexpr int BUZZER_PIN = 7;
-// LEDC hardware buzzer with auto-stop
+constexpr int BUZZER_PIN = 5;
+// LEDC hardware buzzer — attached once in setup(), toggled via duty
 constexpr uint8_t BUZZER_LEDC_CHAN = 0;
 unsigned long buzzerStopAtMs = 0;
 
 void buzzerOff() {
   ledcWrite(BUZZER_LEDC_CHAN, 0);
-  ledcSetup(BUZZER_LEDC_CHAN, 0, 8);  // stop the timer
-  ledcDetachPin(BUZZER_PIN);
-  pinMode(BUZZER_PIN, OUTPUT);
-  digitalWrite(BUZZER_PIN, LOW);
   buzzerStopAtMs = 0;
 }
 
 void buzzerTone(unsigned int freq, unsigned long durationMs = 0) {
   if (freq == 0) { buzzerOff(); return; }
   ledcSetup(BUZZER_LEDC_CHAN, freq, 8);
-  ledcAttachPin(BUZZER_PIN, BUZZER_LEDC_CHAN);
   ledcWrite(BUZZER_LEDC_CHAN, 128);
   if (durationMs > 0) {
     buzzerStopAtMs = millis() + durationMs;
+  }
+}
+
+// Ascending arpeggio inspired by classic arcade coin-insert jingle
+void playStartTune() {
+  static const uint16_t notes[] = {
+    200, 240, 280, 320, 400, 480, 600, 800
+  };
+  static const uint16_t durations[] = {
+    100, 100,  80,  80,  60,  60,  50,  200
+  };
+  for (int i = 0; i < 8; i++) {
+    ledcSetup(BUZZER_LEDC_CHAN, notes[i], 8);
+    ledcWrite(BUZZER_LEDC_CHAN, 128);
+    delay(durations[i]);
+    ledcWrite(BUZZER_LEDC_CHAN, 0);
+    delay(10);
   }
 }
 constexpr float ADC_MAX = 4095.0F;
@@ -407,6 +421,7 @@ void onFinishReceived(unsigned long finishCorrectedMs) {
       unsigned long goToFinishMs = finishCorrectedMs - run->goAtMs;
       unsigned long triggerToFinishMs = finishCorrectedMs - run->startTriggeredAtMs;
       unsigned long totalMs = goToFinishMs + (falseStartDetected ? PENALTY_MS : 0);
+      buzzerTone(1500, 500);
       GateLog::info("FINISH", "---- Results ----");
       GateLog::info("FINISH", "  GO to Finish:      " + String(goToFinishMs / 1000.0F, 3) + "s");
       GateLog::info("FINISH", "  Trigger to Finish: " + String(triggerToFinishMs / 1000.0F, 3) + "s");
@@ -1752,6 +1767,7 @@ void startRunForRider(const String& tagId) {
   // Sync clocks with finish gate before countdown
   sendSyncRequest();
 
+  playStartTune();
   GateLog::info("RUN", "Rider " + rider->displayName + " scanned - starting countdown");
 }
 
@@ -1895,6 +1911,7 @@ void handleFinishGateLoop() {
 
   if (sensorTriggered(SENSOR_LINE1_PIN)) {
     GateLog::info("FINISH", "Sensor triggered - sending to start gate");
+    buzzerTone(1500, 500);
     sendEspNowFinishTrigger();
     eventStore.logEvent("finish_sensor", "", "", millis(), clockOffsetMs);
     finishTriggered = true;
@@ -1922,8 +1939,9 @@ void setup() {
   applySensorThresholds();
   triggerDelta = config.triggerDelta;
   pinMode(SENSOR_LINE1_PIN, INPUT);
-  pinMode(BUZZER_PIN, OUTPUT);
-  digitalWrite(BUZZER_PIN, LOW);
+  ledcSetup(BUZZER_LEDC_CHAN, 1000, 8);
+  ledcAttachPin(BUZZER_PIN, BUZZER_LEDC_CHAN);
+  ledcWrite(BUZZER_LEDC_CHAN, 0);
   // Seed baseline with initial readings
   for (int i = 0; i < BASELINE_SAMPLES; i++) {
     baselineBuffer[i] = readSensorVoltage(SENSOR_LINE1_PIN);
@@ -1957,13 +1975,22 @@ void loop() {
 
   nfcReader.poll();
 
-  // Continuously scan NFC when idle (no active run) on start gate
-  if (config.role == GateRole::Start && nfcReader.isInitialized() && activeRunId.length() == 0) {
+  // Continuously scan NFC on the start gate. A tag is accepted only when it
+  // newly appears so holding it in place does not start and immediately cancel.
+  if (config.role == GateRole::Start && nfcReader.isInitialized()) {
     String tagId;
     if (nfcReader.readTag(tagId)) {
-      lastScannedNfcTag = tagId;
-      GateLog::info("NFC", "Tag scanned: " + tagId);
-      startRunForRider(tagId);
+      const bool newPresentation = !nfcTagPresent || observedNfcTag != tagId;
+      nfcTagPresent = true;
+      observedNfcTag = tagId;
+      if (newPresentation) {
+        lastScannedNfcTag = tagId;
+        GateLog::info("NFC", "Tag scanned: " + tagId);
+        startRunForRider(tagId);
+      }
+    } else {
+      nfcTagPresent = false;
+      observedNfcTag = "";
     }
   }
 
