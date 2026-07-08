@@ -61,6 +61,7 @@ struct CalibrationContext {
   String message;
   String gate;
   bool success;
+  bool peerPressBeeped;
 };
 CalibrationContext cal;
 String lastScannedNfcTag = "";
@@ -214,11 +215,14 @@ void startCalibration(bool fromStartGate) {
     return;
   }
 
+  buzzerTone(800, 300); // Short beep: calibration starting
+
   if (fromStartGate && config.gateNumber == 1 && espNowReady) {
     cal.state = CalState::PeerSent;
     cal.phase = "peer_sent";
     cal.message = "Calibrating peer gate... Do NOT touch the finish tube.";
     cal.gate = "finish";
+    cal.peerPressBeeped = false;
     GateLog::info("CAL", "Sending calibrate command to peer gate...");
     sendEspNowMsg(EspNowMsgType::Calibrate, peerMacBytes, 0, 0);
     cal.phaseStartMs = millis();
@@ -255,6 +259,11 @@ void updateCalibration() {
       cal.phaseStartMs = millis();
     } else if (elapsed >= 3000 && elapsed < 8000) {
       cal.message = "Peer gate: PRESS the finish tube now!";
+      if (!cal.peerPressBeeped) {
+        cal.peerPressBeeped = true;
+        buzzerTone(1000, 150); delay(200);
+        buzzerTone(1000, 150);
+      }
     }
     return;
   }
@@ -275,6 +284,10 @@ void updateCalibration() {
       cal.message = String(cal.gate) + ": PRESS the tube now!";
       cal.peakV = 0.0F;
       cal.phaseStartMs = millis();
+      // Three quick beeps: "PRESS the tube now!"
+      buzzerTone(1200, 150); delay(200);
+      buzzerTone(1200, 150); delay(200);
+      buzzerTone(1200, 150);
       GateLog::info("CAL", "Phase 2: PRESS the tube now (5 seconds)...");
     }
     return;
@@ -294,6 +307,7 @@ void updateCalibration() {
         GateLog::info("CAL", "FAILED - peak not significantly above noise");
         cal.message = "FAILED - press harder or check tube connection";
         cal.success = false;
+        buzzerTone(400, 500); // Low tone: failure
       } else {
         float newDelta = noiseRange * 2.0F;
         if (newDelta < 0.05F) newDelta = 0.05F;
@@ -303,6 +317,9 @@ void updateCalibration() {
         GateLog::info("CAL", "SUCCESS - delta set to " + String(newDelta, 2) + "V");
         cal.message = "SUCCESS - trigger delta set to " + String(newDelta, 2) + "V";
         cal.success = true;
+        // Rising two-tone: success
+        buzzerTone(800, 200); delay(250);
+        buzzerTone(1200, 300);
       }
       cal.state = CalState::Done;
       cal.phase = "done";
