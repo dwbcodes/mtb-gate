@@ -111,7 +111,8 @@ constexpr uint8_t BUZZER_LEDC_CHAN = 0;
 unsigned long buzzerStopAtMs = 0;
 
 void buzzerOff() {
-  ledcWriteTone(BUZZER_LEDC_CHAN, 0);
+  ledcWrite(BUZZER_LEDC_CHAN, 0);
+  ledcSetup(BUZZER_LEDC_CHAN, 0, 8);  // stop the timer
   ledcDetachPin(BUZZER_PIN);
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
