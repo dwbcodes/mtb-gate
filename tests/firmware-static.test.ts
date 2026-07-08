@@ -21,4 +21,13 @@ describe("firmware static contract", () => {
     );
     assert.match(firmware, /startRunForRider\(tagId\);/);
   });
+
+  it("deletes active run immediately when the same rider re-scans", () => {
+    const firmware = readFirmware();
+
+    assert.match(firmware, /const String cancelledRunId = activeRunId;/);
+    assert.match(firmware, /eventStore\.logEvent\("run_cancelled", cancelledRunId, rider->riderId, millis\(\)\);/);
+    assert.match(firmware, /queue\.remove\(cancelledRunId\);/);
+    assert.doesNotMatch(firmware, /activeRun->status = RunStatus::Cancelled;/);
+  });
 });

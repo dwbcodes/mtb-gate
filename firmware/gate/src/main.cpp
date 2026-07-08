@@ -62,6 +62,7 @@ struct CalibrationContext {
   String gate;
   bool success;
   bool peerPressBeeped;
+  bool skipLocal;  // peer-only mode: skip local calibration after peer
 };
 CalibrationContext cal;
 String lastScannedNfcTag = "";
@@ -204,7 +205,8 @@ bool sensorTriggered(int pin) {
 // Forward declaration for calibration
 void sendEspNowMsg(EspNowMsgType type, const uint8_t* destMac, unsigned long ts1, unsigned long ts2);
 
-void startCalibration(bool fromStartGate) {
+// target: "all" = peer then local (default), "local" = this gate only, "peer" = peer only
+void startCalibration(bool fromStartGate, const String& target = "all") {
   if (activeRunId.length() > 0) {
     GateLog::info("CAL", "Cannot calibrate during active run");
     cal.state = CalState::Done;
@@ -217,7 +219,11 @@ void startCalibration(bool fromStartGate) {
 
   buzzerTone(800, 300); // Short beep: calibration starting
 
-  if (fromStartGate && config.gateNumber == 1 && espNowReady) {
+  bool doPeer = fromStartGate && config.gateNumber == 1 && espNowReady && target != "local";
+  bool doLocal = target != "peer";
+  cal.skipLocal = !doLocal;
+
+  if (doPeer) {
     cal.state = CalState::PeerSent;
     cal.phase = "peer_sent";
     cal.message = "Calibrating peer gate... Do NOT touch the finish tube.";
@@ -226,7 +232,7 @@ void startCalibration(bool fromStartGate) {
     GateLog::info("CAL", "Sending calibrate command to peer gate...");
     sendEspNowMsg(EspNowMsgType::Calibrate, peerMacBytes, 0, 0);
     cal.phaseStartMs = millis();
-  } else {
+  } else if (doLocal) {
     cal.state = CalState::LocalIdle;
     cal.phase = "local_idle";
     cal.gate = (config.gateNumber == 1) ? "start" : "gate-" + String(config.gateNumber);
@@ -237,6 +243,13 @@ void startCalibration(bool fromStartGate) {
     cal.idleCount = 0;
     cal.phaseStartMs = millis();
     GateLog::info("CAL", "Phase 1: Sampling idle noise for 3 seconds...");
+  } else {
+    // peer-only but no peer available
+    cal.state = CalState::Done;
+    cal.phase = "done";
+    cal.message = "No peer gate available";
+    cal.success = false;
+    cal.phaseStartMs = millis();
   }
 }
 
@@ -247,16 +260,27 @@ void updateCalibration() {
 
   if (cal.state == CalState::PeerSent) {
     if (elapsed >= 10000) {
-      GateLog::info("CAL", "Peer calibration window complete. Starting local calibration...");
-      cal.state = CalState::LocalIdle;
-      cal.phase = "local_idle";
-      cal.gate = "start";
-      cal.message = "Start gate: Do NOT touch the tube (sampling noise)...";
-      cal.idleMin = 9.0F;
-      cal.idleMax = 0.0F;
-      cal.idleSum = 0.0F;
-      cal.idleCount = 0;
-      cal.phaseStartMs = millis();
+      if (cal.skipLocal) {
+        GateLog::info("CAL", "Peer calibration window complete (peer-only mode).");
+        cal.state = CalState::Done;
+        cal.phase = "done";
+        cal.message = "Peer gate calibration complete";
+        cal.success = true;
+        buzzerTone(800, 200); delay(250);
+        buzzerTone(1200, 300);
+        cal.phaseStartMs = millis();
+      } else {
+        GateLog::info("CAL", "Peer calibration window complete. Starting local calibration...");
+        cal.state = CalState::LocalIdle;
+        cal.phase = "local_idle";
+        cal.gate = "start";
+        cal.message = "Start gate: Do NOT touch the tube (sampling noise)...";
+        cal.idleMin = 9.0F;
+        cal.idleMax = 0.0F;
+        cal.idleSum = 0.0F;
+        cal.idleCount = 0;
+        cal.phaseStartMs = millis();
+      }
     } else if (elapsed >= 3000 && elapsed < 8000) {
       cal.message = "Peer gate: PRESS the finish tube now!";
       if (!cal.peerPressBeeped) {
@@ -309,7 +333,8 @@ void updateCalibration() {
         cal.success = false;
         buzzerTone(400, 500); // Low tone: failure
       } else {
-        float newDelta = noiseRange * 2.0F;
+        // Set threshold midway between noise ceiling and peak signal
+        float newDelta = (noiseRange + peakDelta) / 2.0F;
         if (newDelta < 0.05F) newDelta = 0.05F;
         triggerDelta = newDelta;
         config.triggerDelta = newDelta;
@@ -551,6 +576,9 @@ void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
   }
 
   // --- Start gate handlers ---
+  // Auto-register any responding peer so placeholder MACs get replaced
+  autoRegisterPeer(mac, macStr);
+
   if (payload->type == EspNowMsgType::SyncResponse) {
     unsigned long T4 = millis();
     unsigned long T1 = payload->timestampMs;   // our original T1 echoed back
@@ -568,7 +596,6 @@ void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
     // Stamp with start gate's own millis() — authoritative clock per design.
     // ESP-Now latency (~5-15ms) is acceptable measurement error.
     onFinishReceived(millis());
-    autoRegisterPeer(mac, macStr);
   }
 }
 
@@ -1117,7 +1144,15 @@ void handlePostCalibrate() {
     sendJsonError(409, "Calibration already in progress");
     return;
   }
-  startCalibration(true);
+  String target = "all";
+  if (server.hasArg("gate")) {
+    target = server.arg("gate");
+    if (target != "all" && target != "local" && target != "peer") {
+      sendJsonError(400, "gate must be 'all', 'local', or 'peer'");
+      return;
+    }
+  }
+  startCalibration(true, target);
   sendJson(200, R"({"ok":true,"message":"Calibration started"})");
 }
 
@@ -1740,17 +1775,18 @@ void startRunForRider(const String& tagId) {
     return;
   }
   if (activeRunId.length() > 0) {
-    // Same rider re-scans → cancel their active run
+    // Same rider re-scans -> stop and delete their active run immediately.
     RunRecord* activeRun = queue.find(activeRunId);
     if (activeRun && activeRun->riderId == rider->riderId) {
-      GateLog::info("RUN", "Rider " + rider->displayName + " re-scanned - cancelling run");
-      activeRun->status = RunStatus::Cancelled;
-      eventStore.logEvent("run_cancelled", activeRunId, rider->riderId, millis());
+      const String cancelledRunId = activeRunId;
+      GateLog::info("RUN", "Rider " + rider->displayName + " re-scanned - stopping and deleting run");
+      eventStore.logEvent("run_cancelled", cancelledRunId, rider->riderId, millis());
       activeRunId = "";
       falseStartDetected = false;
       falseStartTriggeredAtMs = 0;
       buzzerOff();
       unfreezeBaseline();
+      queue.remove(cancelledRunId);
       return;
     }
     GateLog::info("RUN", "Run already active for another rider, ignoring scan");

@@ -449,19 +449,19 @@ async function saveWifiConfig() {
   );
 }
 
-async function startSensorCalibration() {
-  const btn = document.getElementById('calibrateAllBtn');
+async function startSensorCalibration(target) {
+  const allBtns = document.querySelectorAll('.calibrate-btn');
   const statusEl = document.getElementById('calibrationStatus');
   const msgEl = document.getElementById('calMessage');
-  btn.disabled = true;
+  allBtns.forEach(b => b.disabled = true);
   statusEl.style.display = 'block';
   msgEl.textContent = 'Starting calibration...';
 
   try {
-    await fetch('/api/calibrate', { method: 'POST' });
+    await fetch('/api/calibrate?gate=' + encodeURIComponent(target), { method: 'POST' });
   } catch (err) {
     msgEl.textContent = 'Error: ' + err.message;
-    btn.disabled = false;
+    allBtns.forEach(b => b.disabled = false);
     return;
   }
 
@@ -474,7 +474,7 @@ async function startSensorCalibration() {
       if (deltaEl && data.triggerDelta != null) deltaEl.textContent = data.triggerDelta.toFixed(2);
       if (data.phase === 'done' || data.phase === 'idle') {
         clearInterval(poll);
-        btn.disabled = false;
+        allBtns.forEach(b => b.disabled = false);
         setTimeout(() => { statusEl.style.display = 'none'; }, 5000);
       }
     } catch (_) { /* ignore transient fetch errors */ }
@@ -862,7 +862,9 @@ document.getElementById('savePeerConfig').addEventListener('click', savePeerConf
 
 document.getElementById('triggerDelta').addEventListener('input', updateSliderValues);
 
-document.getElementById('calibrateAllBtn').addEventListener('click', startSensorCalibration);
+document.querySelectorAll('.calibrate-btn').forEach(btn => {
+  btn.addEventListener('click', () => startSensorCalibration(btn.dataset.calTarget));
+});
 
 document.getElementById('testStatus').addEventListener('click', () => testApiEndpoint('status'));
 document.getElementById('testRiders').addEventListener('click', () => testApiEndpoint('riders'));
