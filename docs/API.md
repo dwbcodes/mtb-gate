@@ -45,7 +45,7 @@ All API responses are direct JSON (no wrapper envelope). Errors include an `erro
 | `GET` | `/api/config` | Full configuration (passwords redacted) |
 | `PUT` | `/api/config/wifi` | Update Wi-Fi SSID/password and channel |
 | `PUT` | `/api/config/mac` | Update peer MAC and gate role |
-| `PUT` | `/api/config/time` | Update sensor thresholds |
+| `PUT` | `/api/config/time` | Update sensor trigger calibration |
 | `GET` | `/api/riders` | List all registered riders |
 | `POST` | `/api/riders` | Register or update a rider |
 | `DELETE` | `/api/riders` | Remove a rider |

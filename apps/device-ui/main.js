@@ -400,9 +400,7 @@ async function loadNetworkConfig() {
     document.getElementById('apSsid').value = config.deviceId || '';
     document.getElementById('staSsid').value = config.staSsid || '';
     document.getElementById('wifiChannel').value = config.wifiChannel || 1;
-    document.getElementById('startThreshold').value = config.startThreshold || 0.85;
-    document.getElementById('line2Threshold').value = config.line2Threshold || 0.85;
-    document.getElementById('finishThreshold').value = config.finishThreshold || 0.85;
+    document.getElementById('triggerDelta').value = config.triggerDelta || 0.30;
     document.getElementById('peerMac').value = config.peerMac || '';
     document.getElementById('gateNumber').value = String(config.gateNumber ?? 1);
 
@@ -416,12 +414,8 @@ async function loadNetworkConfig() {
 }
 
 function updateSliderValues() {
-  document.getElementById('startThresholdValue').textContent =
-    document.getElementById('startThreshold').value;
-  document.getElementById('line2ThresholdValue').textContent =
-    document.getElementById('line2Threshold').value;
-  document.getElementById('finishThresholdValue').textContent =
-    document.getElementById('finishThreshold').value;
+  document.getElementById('triggerDeltaValue').textContent =
+    document.getElementById('triggerDelta').value;
 }
 
 async function saveJsonConfig(endpoint, payload, messageElementId, successText, afterSuccess) {
@@ -489,9 +483,7 @@ async function startSensorCalibration() {
 
 async function saveSensorConfig() {
   const config = {
-    startThreshold: parseFloat(document.getElementById('startThreshold').value),
-    line2Threshold: parseFloat(document.getElementById('line2Threshold').value),
-    finishThreshold: parseFloat(document.getElementById('finishThreshold').value)
+    triggerDelta: parseFloat(document.getElementById('triggerDelta').value)
   };
 
   await saveJsonConfig('/api/config/time', config, 'sensorMessage', '✓ Saved!');
@@ -584,11 +576,9 @@ async function restoreConfig(file) {
       await apiJson('/api/config/wifi', jsonOptions('PUT', wifiPayload));
     }
 
-    // Apply sensor thresholds
+    // Apply active baseline-relative sensor calibration.
     const timePayload = {};
-    if (config.startThreshold !== undefined) timePayload.startThreshold = config.startThreshold;
-    if (config.finishThreshold !== undefined) timePayload.finishThreshold = config.finishThreshold;
-    if (config.line2Threshold !== undefined) timePayload.line2Threshold = config.line2Threshold;
+    if (config.triggerDelta !== undefined) timePayload.triggerDelta = config.triggerDelta;
 
     if (Object.keys(timePayload).length > 0) {
       await apiJson('/api/config/time', jsonOptions('PUT', timePayload));
@@ -870,9 +860,7 @@ document.getElementById('saveWifiConfig').addEventListener('click', saveWifiConf
 document.getElementById('saveSensorConfig').addEventListener('click', saveSensorConfig);
 document.getElementById('savePeerConfig').addEventListener('click', savePeerConfig);
 
-document.getElementById('startThreshold').addEventListener('input', updateSliderValues);
-document.getElementById('line2Threshold').addEventListener('input', updateSliderValues);
-document.getElementById('finishThreshold').addEventListener('input', updateSliderValues);
+document.getElementById('triggerDelta').addEventListener('input', updateSliderValues);
 
 document.getElementById('calibrateAllBtn').addEventListener('click', startSensorCalibration);
 

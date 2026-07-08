@@ -97,22 +97,20 @@ for (const port of getHarnessConfig().ports) {
       }
     });
 
-    test("@api-integration threshold reflects in config after PUT", async () => {
+    test("@api-integration trigger delta reflects in config after PUT", async () => {
       const configRes = await api.get("/api/config");
       const original = await configRes.json();
 
       try {
-        const newThresholds = { startThreshold: 1.23, line2Threshold: 0.45, finishThreshold: 0.67 };
-        const put = await api.put("/api/config/time", { data: newThresholds });
+        const put = await api.put("/api/config/time", { data: { triggerDelta: 0.24 } });
         expect(put.ok()).toBeTruthy();
 
         const updated = await (await api.get("/api/config")).json();
-        expect(updated.startThreshold).toBeCloseTo(1.23, 2);
-        expect(updated.line2Threshold).toBeCloseTo(0.45, 2);
-        expect(updated.finishThreshold).toBeCloseTo(0.67, 2);
+        expect(updated.triggerDelta).toBeCloseTo(0.24, 2);
       } finally {
         await api.put("/api/config/time", {
           data: {
+            triggerDelta: original.triggerDelta,
             startThreshold: original.startThreshold,
             line2Threshold: original.line2Threshold,
             finishThreshold: original.finishThreshold
@@ -180,7 +178,8 @@ for (const port of getHarnessConfig().ports) {
         peerMac: expect.any(String),
         startThreshold: expect.any(Number),
         line2Threshold: expect.any(Number),
-        finishThreshold: expect.any(Number)
+        finishThreshold: expect.any(Number),
+        triggerDelta: expect.any(Number)
       }));
 
       // Role-specific: start gate = gateNumber 1, finish gate = gateNumber 12

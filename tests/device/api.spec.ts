@@ -54,6 +54,7 @@ for (const port of getHarnessConfig().ports) {
     expect(deviceConfig.staPassword).toBe("***");
 
     const originalThresholds = {
+      triggerDelta: deviceConfig.triggerDelta,
       startThreshold: deviceConfig.startThreshold,
       line2Threshold: deviceConfig.line2Threshold,
       finishThreshold: deviceConfig.finishThreshold
@@ -62,12 +63,12 @@ for (const port of getHarnessConfig().ports) {
 
     try {
       const validThresholdResponse = await api.put("/api/config/time", {
-        data: { startThreshold: 0.82, line2Threshold: 0.83, finishThreshold: 0.84 }
+        data: { triggerDelta: 0.24 }
       });
       expect(validThresholdResponse.ok()).toBeTruthy();
 
       const invalidThresholdResponse = await api.put("/api/config/time", {
-        data: { startThreshold: 2.5 }
+        data: { triggerDelta: 2.5 }
       });
       expect(invalidThresholdResponse.status()).toBe(400);
 

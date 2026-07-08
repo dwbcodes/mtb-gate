@@ -20,7 +20,7 @@ Complete REST API documentation for MTB Gate timing system.
 - **[API_CONFIG.md](API_CONFIG.md)** — `GET /api/config` — Full configuration (passwords redacted)
 - **[API_WIFI.md](API_WIFI.md)** — `PUT /api/config/wifi` — Update Wi-Fi settings
 - **[API_MAC.md](API_MAC.md)** — `PUT /api/config/mac` — Update peer MAC and role
-- **[API_TIME.md](API_TIME.md)** — `PUT /api/config/time` — Update sensor thresholds
+- **[API_TIME.md](API_TIME.md)** — `PUT /api/config/time` — Update sensor trigger calibration
 
 #### Rider Management
 - **[API_RIDERS.md](API_RIDERS.md)** — GET/POST/DELETE `/api/riders` — Manage rider roster

@@ -136,8 +136,8 @@
     },
     "/config/time": {
       "put": {
-        "summary": "Update sensor thresholds",
-        "description": "Update sensor trip thresholds for start, line 2, and finish triggers. Thresholds are analog voltage levels (0.00–2.00 V).",
+        "summary": "Update sensor trigger calibration",
+        "description": "Update the active baseline-relative sensor trigger delta. Firmware triggers when sensor voltage rises above rolling baseline + triggerDelta. Legacy absolute threshold fields are accepted for compatibility but are not the active trigger path.",
         "operationId": "putConfigTime",
         "tags": ["Configuration"],
         "requestBody": {
@@ -462,7 +462,7 @@
             "example": 0.85,
             "minimum": 0.0,
             "maximum": 2.0,
-            "description": "Sensor threshold (volts) for start trigger"
+            "description": "Legacy stored absolute threshold; not used by current trigger logic"
           },
           "line2Threshold": {
             "type": "number",
@@ -470,7 +470,7 @@
             "example": 0.85,
             "minimum": 0.0,
             "maximum": 2.0,
-            "description": "Sensor threshold (volts) for line 2 trigger"
+            "description": "Legacy stored absolute threshold; not used by current trigger logic"
           },
           "finishThreshold": {
             "type": "number",
@@ -478,7 +478,15 @@
             "example": 0.85,
             "minimum": 0.0,
             "maximum": 2.0,
-            "description": "Sensor threshold (volts) for finish trigger"
+            "description": "Legacy stored absolute threshold; not used by current trigger logic"
+          },
+          "triggerDelta": {
+            "type": "number",
+            "format": "float",
+            "example": 0.30,
+            "minimum": 0.01,
+            "maximum": 2.0,
+            "description": "Active trigger delta in volts above the rolling baseline"
           },
           "wifiChannel": {
             "type": "integer",
@@ -550,26 +558,33 @@
       "TimeConfig": {
         "type": "object",
         "properties": {
+          "triggerDelta": {
+            "type": "number",
+            "format": "float",
+            "minimum": 0.01,
+            "maximum": 2.0,
+            "description": "Active trigger delta in volts above the rolling baseline"
+          },
           "startThreshold": {
             "type": "number",
             "format": "float",
             "minimum": 0.0,
             "maximum": 2.0,
-            "description": "Sensor threshold (volts) for start trigger"
+            "description": "Legacy stored absolute threshold; not used by current trigger logic"
           },
           "line2Threshold": {
             "type": "number",
             "format": "float",
             "minimum": 0.0,
             "maximum": 2.0,
-            "description": "Sensor threshold (volts) for line 2 trigger"
+            "description": "Legacy stored absolute threshold; not used by current trigger logic"
           },
           "finishThreshold": {
             "type": "number",
             "format": "float",
             "minimum": 0.0,
             "maximum": 2.0,
-            "description": "Sensor threshold (volts) for finish trigger"
+            "description": "Legacy stored absolute threshold; not used by current trigger logic"
           }
         }
       },

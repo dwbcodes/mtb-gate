@@ -106,6 +106,27 @@ unsigned long lastSyncAtMs = 0; // start gate: when last sync completed
 // Sensor pin and reading
 constexpr int SENSOR_LINE1_PIN = 0;
 constexpr int BUZZER_PIN = 7;
+// LEDC hardware buzzer with auto-stop
+constexpr uint8_t BUZZER_LEDC_CHAN = 0;
+unsigned long buzzerStopAtMs = 0;
+
+void buzzerOff() {
+  ledcWriteTone(BUZZER_LEDC_CHAN, 0);
+  ledcDetachPin(BUZZER_PIN);
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+  buzzerStopAtMs = 0;
+}
+
+void buzzerTone(unsigned int freq, unsigned long durationMs = 0) {
+  if (freq == 0) { buzzerOff(); return; }
+  ledcSetup(BUZZER_LEDC_CHAN, freq, 8);
+  ledcAttachPin(BUZZER_PIN, BUZZER_LEDC_CHAN);
+  ledcWrite(BUZZER_LEDC_CHAN, 128);
+  if (durationMs > 0) {
+    buzzerStopAtMs = millis() + durationMs;
+  }
+}
 constexpr float ADC_MAX = 4095.0F;
 constexpr float ADC_VREF = 3.3F;
 
@@ -647,6 +668,7 @@ String statusJson() {
   doc["startThreshold"] = config.startThreshold;
   doc["finishThreshold"] = config.finishThreshold;
   doc["line2Threshold"] = config.line2Threshold;
+  doc["triggerDelta"] = config.triggerDelta;
   JsonObject espNow = doc["espNow"].to<JsonObject>();
   espNow["connected"] = config.peerMac.length() > 0;
   espNow["peerMac"] = config.peerMac;
@@ -783,15 +805,20 @@ String updateTimeConfigFromJson(const String& body) {
   if (doc["startThreshold"].is<float>()) next.startThreshold = doc["startThreshold"].as<float>();
   if (doc["finishThreshold"].is<float>()) next.finishThreshold = doc["finishThreshold"].as<float>();
   if (doc["line2Threshold"].is<float>()) next.line2Threshold = doc["line2Threshold"].as<float>();
+  if (doc["triggerDelta"].is<float>()) next.triggerDelta = doc["triggerDelta"].as<float>();
 
   if (next.startThreshold < 0.0F || next.startThreshold > 2.0F ||
       next.finishThreshold < 0.0F || next.finishThreshold > 2.0F ||
       next.line2Threshold < 0.0F || next.line2Threshold > 2.0F) {
     return R"({"error":"Thresholds must be 0.00-2.00"})";
   }
+  if (next.triggerDelta < 0.01F || next.triggerDelta > 2.0F) {
+    return R"({"error":"triggerDelta must be 0.01-2.00"})";
+  }
 
   config = configStore.save(next);
   applySensorThresholds();
+  triggerDelta = config.triggerDelta;
   return R"({"ok":true})";
 }
 
@@ -1403,7 +1430,7 @@ void handlePostResultsStop() {
   activeRunId = "";
   falseStartDetected = false;
   falseStartTriggeredAtMs = 0;
-  noTone(BUZZER_PIN);
+  buzzerOff();
   unfreezeBaseline();
   queue.removeTerminal();
   sendJson(200, R"({"ok":true,"message":"Active run cancelled"})");
@@ -1431,7 +1458,7 @@ void handleDeleteResults() {
       activeRunId = "";
       falseStartDetected = false;
       falseStartTriggeredAtMs = 0;
-      noTone(BUZZER_PIN);
+      buzzerOff();
       unfreezeBaseline();
     }
     queue.remove(runId);
@@ -1688,7 +1715,7 @@ void startRunForRider(const String& tagId) {
       activeRunId = "";
       falseStartDetected = false;
       falseStartTriggeredAtMs = 0;
-      noTone(BUZZER_PIN);
+      buzzerOff();
       unfreezeBaseline();
       return;
     }
@@ -1754,14 +1781,13 @@ void handleStartGateLoop(unsigned long now) {
         GateLog::info("RUN", "Countdown: " + String(secondsLeft));
       }
       switch (secondsLeft) {
-        case 10: tone(BUZZER_PIN, 500, 500); break;
-        case 5:  tone(BUZZER_PIN, 800, 300); break;
-        case 3: case 2: case 1: tone(BUZZER_PIN, 1000, 200); break;
+        case 10: buzzerTone(800, 500); break;
+        case 5: case 4: case 3: case 2: case 1: buzzerTone(1000, 200); break;
       }
     }
 
-    // Only check false start in final 3 seconds (rider should be in position)
-    if (!falseStartDetected && secondsLeft <= 3 && sensorTriggered(SENSOR_LINE1_PIN)) {
+    // Check false start throughout entire countdown
+    if (!falseStartDetected && sensorTriggered(SENSOR_LINE1_PIN)) {
       falseStartDetected = true;
       falseStartTriggeredAtMs = now;
       eventStore.logEvent("false_start", run->runId, run->riderId, now);
@@ -1780,12 +1806,12 @@ void handleStartGateLoop(unsigned long now) {
         }
         GateLog::info("RUN", "GO! FALSE START - Reaction: 5.00s (penalty)");
         GateLog::info("RUN", "On course - waiting for finish gate...");
-        tone(BUZZER_PIN, 1500, 3000);
+        buzzerTone(2000, 2000);
         unfreezeBaseline();
       } else {
         queue.updateStatus(run->runId, RunStatus::AwaitingStart, now);
         GateLog::info("RUN", "GO!");
-        tone(BUZZER_PIN, 1500, 3000);
+        buzzerTone(2000, 2000);
       }
     }
     return;
@@ -1813,7 +1839,7 @@ void handleStartGateLoop(unsigned long now) {
       run->status = RunStatus::TimedOut;
       eventStore.logEvent("run_timed_out", run->runId, run->riderId, now);
       activeRunId = "";
-      noTone(BUZZER_PIN);
+      buzzerOff();
       unfreezeBaseline();
       queue.removeTerminal();
     }
@@ -1822,7 +1848,7 @@ void handleStartGateLoop(unsigned long now) {
 
   // Finished → clear active run and clean up queue
   if (run->status == RunStatus::Finished) {
-    noTone(BUZZER_PIN);
+    buzzerOff();
     activeRunId = "";
     queue.removeTerminal();
     return;
@@ -1896,6 +1922,7 @@ void setup() {
   triggerDelta = config.triggerDelta;
   pinMode(SENSOR_LINE1_PIN, INPUT);
   pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
   // Seed baseline with initial readings
   for (int i = 0; i < BASELINE_SAMPLES; i++) {
     baselineBuffer[i] = readSensorVoltage(SENSOR_LINE1_PIN);
@@ -1951,6 +1978,10 @@ void loop() {
     handleSerialCommand(GateLog::readLine());
   }
   server.handleClient();
+
+  if (buzzerStopAtMs > 0 && millis() >= buzzerStopAtMs) {
+    buzzerOff();
+  }
 
   if (pendingReboot) {
     pendingReboot = false;

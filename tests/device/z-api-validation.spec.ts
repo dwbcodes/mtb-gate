@@ -134,29 +134,26 @@ for (const port of getHarnessConfig().ports) {
 
     // --- Threshold boundaries ---
 
-    test("@api-validation threshold boundaries", async () => {
+    test("@api-validation trigger delta boundaries", async () => {
       const configRes = await api.get("/api/config");
       const original = await configRes.json();
 
       try {
-        const neg = await api.put("/api/config/time", { data: { startThreshold: -0.1 } });
-        expect(neg.status(), "negative threshold should be rejected").toBe(400);
+        const zero = await api.put("/api/config/time", { data: { triggerDelta: 0.0 } });
+        expect(zero.status(), "0.0 triggerDelta should be rejected").toBe(400);
 
-        const zero = await api.put("/api/config/time", {
-          data: { startThreshold: 0.0, line2Threshold: 0.0, finishThreshold: 0.0 }
-        });
-        expect(zero.ok(), "0.0 threshold should be accepted").toBeTruthy();
+        const min = await api.put("/api/config/time", { data: { triggerDelta: 0.01 } });
+        expect(min.ok(), "0.01 triggerDelta should be accepted").toBeTruthy();
 
-        const two = await api.put("/api/config/time", {
-          data: { startThreshold: 2.0, line2Threshold: 2.0, finishThreshold: 2.0 }
-        });
-        expect(two.ok(), "2.0 threshold should be accepted").toBeTruthy();
+        const two = await api.put("/api/config/time", { data: { triggerDelta: 2.0 } });
+        expect(two.ok(), "2.0 triggerDelta should be accepted").toBeTruthy();
 
-        const over = await api.put("/api/config/time", { data: { startThreshold: 2.01 } });
-        expect(over.status(), "2.01 threshold should be rejected").toBe(400);
+        const over = await api.put("/api/config/time", { data: { triggerDelta: 2.01 } });
+        expect(over.status(), "2.01 triggerDelta should be rejected").toBe(400);
       } finally {
         await api.put("/api/config/time", {
           data: {
+            triggerDelta: original.triggerDelta,
             startThreshold: original.startThreshold,
             line2Threshold: original.line2Threshold,
             finishThreshold: original.finishThreshold

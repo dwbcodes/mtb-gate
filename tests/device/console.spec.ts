@@ -46,6 +46,7 @@ for (const port of getHarnessConfig().ports) {
     expect(config.staPassword).toBe("***");
 
     const originalThresholds = {
+      triggerDelta: config.triggerDelta,
       startThreshold: config.startThreshold,
       line2Threshold: config.line2Threshold,
       finishThreshold: config.finishThreshold
@@ -73,12 +74,12 @@ for (const port of getHarnessConfig().ports) {
 
       const timeOk = await requestConsoleApi<any>(
         port,
-        'api config/time {"startThreshold":0.81,"line2Threshold":0.82,"finishThreshold":0.83}'
+        'api config/time {"triggerDelta":0.24}'
       );
       expect(timeOk.ok).toBe(true);
 
-      const invalidTime = await requestConsoleApi<any>(port, 'api config/time {"startThreshold":2.5}');
-      expect(invalidTime.error).toMatch(/Thresholds/);
+      const invalidTime = await requestConsoleApi<any>(port, 'api config/time {"triggerDelta":2.5}');
+      expect(invalidTime.error).toMatch(/triggerDelta/);
 
       // MAC config changes trigger device reboot — wait for it to come back
       const macOk = await requestConsoleApi<any>(
@@ -97,9 +98,7 @@ for (const port of getHarnessConfig().ports) {
 
       const configAfterUpdates = await requestConsoleApi<any>(port, "api config");
       expect(configAfterUpdates.wifiChannel).toBe(6);
-      expect(configAfterUpdates.startThreshold).toBeCloseTo(0.81, 2);
-      expect(configAfterUpdates.line2Threshold).toBeCloseTo(0.82, 2);
-      expect(configAfterUpdates.finishThreshold).toBeCloseTo(0.83, 2);
+      expect(configAfterUpdates.triggerDelta).toBeCloseTo(0.24, 2);
       // On finish gates, auto-discovery may overwrite peerMac after reboot
       if (status.role === "start") {
         expect(configAfterUpdates.peerMac).toBe("11:22:33:44:55:66");

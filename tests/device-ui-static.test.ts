@@ -39,6 +39,21 @@ describe("device UI static contract", () => {
     assert.match(js, /applyRoleUi\(status\.role\)/);
   });
 
+  it("exposes baseline-relative sensor calibration instead of absolute threshold sliders", () => {
+    const html = readUiFile("index.html");
+    const js = readUiFile("main.js");
+
+    assert.match(html, /Trigger Delta Above Baseline/);
+    assert.match(html, /id="triggerDelta"/);
+    assert.doesNotMatch(html, /id="startThreshold"/);
+    assert.doesNotMatch(html, /id="line2Threshold"/);
+    assert.doesNotMatch(html, /id="finishThreshold"/);
+    assert.match(js, /triggerDelta: parseFloat\(document\.getElementById\('triggerDelta'\)\.value\)/);
+    assert.doesNotMatch(js, /document\.getElementById\('startThreshold'\)/);
+    assert.doesNotMatch(js, /document\.getElementById\('line2Threshold'\)/);
+    assert.doesNotMatch(js, /document\.getElementById\('finishThreshold'\)/);
+  });
+
   it("routes peer commands through local ESP-NOW APIs instead of browser peer fetches", () => {
     const html = readUiFile("index.html");
     const js = readUiFile("main.js");

@@ -135,35 +135,27 @@ curl -X PUT $GATE/config/mac \
   }'
 ```
 
-## Sensor Thresholds
+## Sensor Calibration
 
-### Update all thresholds
+### Update trigger delta
 ```sh
 curl -X PUT $GATE/config/time \
   -H 'Content-Type: application/json' \
-  -d '{
-    "startThreshold": 0.80,
-    "line2Threshold": 0.75,
-    "finishThreshold": 0.85
-  }'
+  -d '{"triggerDelta": 0.25}'
 ```
 
-### Fine-tune start sensor
+### Reduce sensitivity
 ```sh
 curl -X PUT $GATE/config/time \
   -H 'Content-Type: application/json' \
-  -d '{"startThreshold": 0.90}'
+  -d '{"triggerDelta": 0.40}'
 ```
 
-### Reset to defaults (0.85 all)
+### Reset to default
 ```sh
 curl -X PUT $GATE/config/time \
   -H 'Content-Type: application/json' \
-  -d '{
-    "startThreshold": 0.85,
-    "line2Threshold": 0.85,
-    "finishThreshold": 0.85
-  }'
+  -d '{"triggerDelta": 0.30}'
 ```
 
 ## Rider Management
@@ -336,17 +328,17 @@ curl -s $GATE/status | jq '.espNow.connected'
 
 while true; do
   echo ""
-  echo "Current thresholds:"
-  curl -s $GATE/config | jq '.startThreshold, .line2Threshold, .finishThreshold'
+  echo "Current trigger delta:"
+  curl -s $GATE/config | jq '.triggerDelta'
   echo ""
-  echo "Enter new start threshold (or press Enter to skip):"
-  read newStartThreshold
+  echo "Enter new trigger delta (or press Enter to skip):"
+  read newTriggerDelta
 
-  if [ -n "$newStartThreshold" ]; then
+  if [ -n "$newTriggerDelta" ]; then
     curl -X PUT $GATE/config/time \
       -H 'Content-Type: application/json' \
-      -d "{\"startThreshold\":$newStartThreshold}"
-    echo "Updated start threshold to $newStartThreshold"
+      -d "{\"triggerDelta\":$newTriggerDelta}"
+    echo "Updated trigger delta to $newTriggerDelta"
   fi
 
   echo "Continue? (y/n)"
@@ -371,7 +363,7 @@ curl -X PUT $GATE/config/wifi \
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
   -X PUT $GATE/config/time \
   -H 'Content-Type: application/json' \
-  -d '{"startThreshold":3.0}')
+  -d '{"triggerDelta":0}')
 
 if [ "$HTTP_CODE" -eq 400 ]; then
   echo "Validation error"

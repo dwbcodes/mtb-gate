@@ -210,6 +210,7 @@ async function restoreGate(gate: BackedUpGate, secrets: { apPassword: string; st
 
   await gate.api.put("/api/config/time", {
     data: {
+      triggerDelta: gate.config.triggerDelta,
       startThreshold: gate.config.startThreshold,
       line2Threshold: gate.config.line2Threshold,
       finishThreshold: gate.config.finishThreshold
