@@ -382,25 +382,148 @@ button:disabled {
 
 .danger-actions:last-child { margin-bottom: 0; }
 
-.doc-links {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+.doc-picker,
+.doc-actions {
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   margin-top: 12px;
 }
 
+.doc-tab,
 .doc-link {
-  display: grid;
-  place-items: center;
   min-height: var(--tap);
   padding: 12px;
-  color: var(--accent);
+  color: var(--ink);
   background: var(--accent-2);
   border: 1px solid #bddcc9;
   border-radius: 8px;
   font-weight: 800;
   text-align: center;
   text-decoration: none;
+}
+
+.doc-tab.active {
+  color: #ffffff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.doc-link {
+  display: inline-grid;
+  place-items: center;
+  color: var(--accent);
+  background: #ffffff;
+}
+
+.doc-viewer {
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.doc-viewer h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.doc-viewer .section-head span {
+  color: var(--muted);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.doc-content {
+  display: grid;
+  gap: 12px;
+}
+
+.doc-content h2,
+.doc-content h3,
+.doc-content h4,
+.doc-content p,
+.doc-content ul {
+  margin: 0;
+}
+
+.doc-content h2 {
+  padding-top: 4px;
+  font-size: 1.28rem;
+}
+
+.doc-content h3 {
+  padding-top: 2px;
+  font-size: 1.08rem;
+}
+
+.doc-content h4 {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.doc-content p,
+.doc-content li {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.doc-content ul {
+  padding-left: 20px;
+}
+
+.doc-content code {
+  color: #1d4f87;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.doc-content pre {
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  color: #f7fbff;
+  background: #17201b;
+  border-radius: 8px;
+  white-space: pre;
+}
+
+.doc-content pre code {
+  color: inherit;
+}
+
+.doc-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.doc-content table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  background: #ffffff;
+}
+
+.doc-content th,
+.doc-content td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.doc-content th {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.doc-content tr:last-child td {
+  border-bottom: 0;
 }
 
 .roster {
@@ -449,6 +572,19 @@ button:disabled {
 .attempt h3 {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.attempt-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.btn-small {
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  border-radius: 4px;
 }
 
 .attempt > div > p {

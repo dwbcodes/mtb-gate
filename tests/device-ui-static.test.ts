@@ -56,4 +56,29 @@ describe("device UI static contract", () => {
     assert.match(firmware, /server\.on\("\/api\/peer\/calibrate", HTTP_POST, handlePostPeerCalibrate\)/);
     assert.match(firmware, /server\.on\("\/api\/peer\/riders\/sync", HTTP_POST, handlePostPeerRidersSync\)/);
   });
+
+  it("links only to API documentation routes served by firmware", () => {
+    const html = readUiFile("index.html");
+    const firmware = readFileSync(join(root, "firmware/gate/src/main.cpp"), "utf8");
+
+    const docLinks = [
+      ...new Set([...html.matchAll(/(?:href|data-doc-url)="(\/docs\/[^"]+)"/g)].map((match) => match[1]))
+    ];
+    assert.deepEqual(docLinks.sort(), [
+      "/docs/API.md",
+      "/docs/API_CONFIG.md",
+      "/docs/API_MAC.md",
+      "/docs/API_RIDERS.md",
+      "/docs/API_STATUS.md",
+      "/docs/API_TIME.md",
+      "/docs/API_WIFI.md",
+      "/docs/CURL_EXAMPLES.md",
+      "/docs/openapi.json"
+    ].sort());
+    assert.doesNotMatch(html, /openapi\.yaml/);
+
+    for (const link of docLinks) {
+      assert.match(firmware, new RegExp(`server\\.on\\("${link.replaceAll("/", "\\/")}", HTTP_GET, handleDocs`));
+    }
+  });
 });

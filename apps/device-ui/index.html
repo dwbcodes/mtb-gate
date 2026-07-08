@@ -60,6 +60,12 @@
               <h2>Recent Attempts</h2>
               <button id="refreshResults" class="btn-secondary">Refresh</button>
             </div>
+            <p style="color: var(--muted); font-size: 0.85em; margin-bottom: 12px;">
+              <strong>Gate Time</strong> = GO signal to crossing the start line.
+              <strong>Course</strong> = start line to finish line.
+              <strong>Total</strong> = official time (course only if penalised, GO-to-finish otherwise).
+              <strong>Potential</strong> = best possible time without penalty.
+            </p>
             <div id="attempts" class="attempts"></div>
           </section>
 
@@ -280,14 +286,28 @@
           <section class="card">
             <h2>API Documentation</h2>
             <p style="color: var(--muted); margin-bottom: 4px;">Complete REST API reference for device control and integration.</p>
-            <div class="doc-links">
-              <a href="/docs/API.md" target="_blank" class="doc-link">API Overview</a>
-              <a href="/docs/openapi.yaml" target="_blank" class="doc-link">OpenAPI (YAML)</a>
-              <a href="/docs/openapi.json" target="_blank" class="doc-link">OpenAPI (JSON)</a>
-              <a href="/docs/CURL_EXAMPLES.md" target="_blank" class="doc-link">curl Examples</a>
-              <a href="/docs/API_STATUS.md" target="_blank" class="doc-link">Status Endpoint</a>
-              <a href="/docs/API_RIDERS.md" target="_blank" class="doc-link">Riders Endpoint</a>
+            <div class="doc-picker" aria-label="API documents">
+              <button class="doc-tab active" data-doc-url="/docs/API.md" data-doc-title="API Overview" data-doc-type="markdown">Overview</button>
+              <button class="doc-tab" data-doc-url="/docs/API_STATUS.md" data-doc-title="Status Endpoint" data-doc-type="markdown">Status</button>
+              <button class="doc-tab" data-doc-url="/docs/API_RIDERS.md" data-doc-title="Riders Endpoint" data-doc-type="markdown">Riders</button>
+              <button class="doc-tab" data-doc-url="/docs/API_CONFIG.md" data-doc-title="Config Endpoint" data-doc-type="markdown">Config</button>
+              <button class="doc-tab" data-doc-url="/docs/API_WIFI.md" data-doc-title="Wi-Fi Endpoint" data-doc-type="markdown">Wi-Fi</button>
+              <button class="doc-tab" data-doc-url="/docs/API_TIME.md" data-doc-title="Timing Endpoint" data-doc-type="markdown">Timing</button>
+              <button class="doc-tab" data-doc-url="/docs/API_MAC.md" data-doc-title="Gate MAC Endpoint" data-doc-type="markdown">Gate MAC</button>
+              <button class="doc-tab" data-doc-url="/docs/CURL_EXAMPLES.md" data-doc-title="curl Examples" data-doc-type="markdown">curl</button>
+              <button class="doc-tab" data-doc-url="/docs/openapi.json" data-doc-title="OpenAPI JSON" data-doc-type="json">OpenAPI</button>
             </div>
+            <div class="doc-actions">
+              <a href="/docs/API.md" target="_blank" class="doc-link">Open Markdown</a>
+              <a href="/docs/openapi.json" target="_blank" class="doc-link">Open OpenAPI JSON</a>
+            </div>
+            <article class="doc-viewer" aria-live="polite">
+              <div class="section-head">
+                <h3 id="docTitle">API Overview</h3>
+                <span id="docStatus">Loading...</span>
+              </div>
+              <div id="docContent" class="doc-content"></div>
+            </article>
           </section>
 
           <section class="card">
@@ -319,11 +339,21 @@
                 <span>Peer Status</span>
                 <strong id="peerToolStatus">—</strong>
               </div>
+              <div class="status-item">
+                <span>Round-Trip Time</span>
+                <strong id="peerRtt">—</strong>
+              </div>
+              <div class="status-item">
+                <span>Clock Offset</span>
+                <strong id="peerClockOffset">—</strong>
+              </div>
             </div>
 
             <div class="quick-action-grid peer-command-grid">
               <button class="btn-secondary" data-peer-command="/api/peer/ping">Ping / Discover</button>
+              <button class="btn-secondary" data-peer-command="/api/peer/push">Push Config</button>
               <button class="btn-secondary" data-peer-command="/api/peer/sync">Clock Sync</button>
+              <button class="btn-secondary" id="checkClockBtn">Check Clock</button>
               <button class="btn-secondary" data-peer-command="/api/peer/calibrate">Calibrate Peer</button>
               <button class="btn-secondary" data-peer-command="/api/peer/riders/sync">Sync Riders</button>
             </div>

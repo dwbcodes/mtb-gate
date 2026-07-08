@@ -3,16 +3,26 @@ import { basename, join } from "node:path";
 
 const root = new URL("..", import.meta.url).pathname;
 const uiDir = join(root, "apps/device-ui");
+const docsDir = join(root, "docs");
 const output = join(root, "firmware/shared/include/device_ui.h");
 
 const assets = [
-  ["index_html", "index.html"],
-  ["styles_css", "styles.css"],
-  ["main_js", "main.js"]
+  ["index_html", uiDir, "index.html"],
+  ["styles_css", uiDir, "styles.css"],
+  ["main_js", uiDir, "main.js"],
+  ["docs_api_md", docsDir, "API.md"],
+  ["docs_openapi_json", docsDir, "openapi.json"],
+  ["docs_curl_examples_md", docsDir, "CURL_EXAMPLES.md"],
+  ["docs_api_status_md", docsDir, "API_STATUS.md"],
+  ["docs_api_riders_md", docsDir, "API_RIDERS.md"],
+  ["docs_api_config_md", docsDir, "API_CONFIG.md"],
+  ["docs_api_wifi_md", docsDir, "API_WIFI.md"],
+  ["docs_api_time_md", docsDir, "API_TIME.md"],
+  ["docs_api_mac_md", docsDir, "API_MAC.md"]
 ];
 
-function bytesFor(file) {
-  return [...readFileSync(join(uiDir, file))];
+function bytesFor(dir, file) {
+  return [...readFileSync(join(dir, file))];
 }
 
 function formatBytes(bytes) {
@@ -26,8 +36,8 @@ function formatBytes(bytes) {
   return lines.join(",\n");
 }
 
-const sections = assets.map(([symbol, file]) => {
-  const bytes = bytesFor(file);
+const sections = assets.map(([symbol, dir, file]) => {
+  const bytes = bytesFor(dir, file);
   return `// ${basename(file)} (${bytes.length} bytes)
 const uint8_t ${symbol}_data[] PROGMEM = {
 ${formatBytes(bytes)}

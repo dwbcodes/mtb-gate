@@ -47,6 +47,7 @@ IPAddress staIp;
 bool pendingNetworkRestart = false;
 bool pendingReboot = false;
 bool pendingCalibration = false;
+bool pendingChannelScan = false;
 
 // Non-blocking calibration state machine
 enum class CalState : uint8_t { Idle, PeerSent, LocalIdle, LocalPress, Done };
@@ -99,6 +100,8 @@ constexpr unsigned long PING_INTERVAL_MS = 10000;
 long clockOffsetMs = 0;        // finish gate: add to local millis() to get start-gate time
 bool clockSynced = false;
 unsigned long syncT1 = 0;      // start gate: T1 of pending sync request
+unsigned long lastRttMs = 0;   // start gate: last measured RTT
+unsigned long lastSyncAtMs = 0; // start gate: when last sync completed
 
 // Sensor pin and reading
 constexpr int SENSOR_LINE1_PIN = 0;
@@ -268,6 +271,15 @@ void updateCalibration() {
       cal.state = CalState::Done;
       cal.phase = "done";
       cal.phaseStartMs = millis();
+
+      // Re-seed baseline after calibration so sensor is immediately responsive
+      for (int i = 0; i < BASELINE_SAMPLES; i++) {
+        baselineBuffer[i] = readSensorVoltage(SENSOR_LINE1_PIN);
+        delay(5);
+      }
+      baselineFilled = true;
+      sensorAboveCount = 0;
+      GateLog::info("CAL", "Baseline re-seeded: " + String(getBaseline(), 2) + "V delta=" + String(triggerDelta, 2) + "V");
     }
     return;
   }
@@ -353,8 +365,11 @@ void sendSyncRequest() {
 }
 
 void sendEspNowFinishTrigger() {
-  if (!espNowReady) return;
-  // Timestamp is informational only — start gate uses its own millis() on receipt
+  if (!espNowReady) {
+    GateLog::info("FINISH", "ESP-Now NOT ready - trigger lost! peerMac=" + config.peerMac);
+    return;
+  }
+  GateLog::info("FINISH", "Sending finish trigger via ESP-Now to " + config.peerMac);
   sendEspNowMsg(EspNowMsgType::FinishTrigger, peerMacBytes, millis());
 }
 
@@ -444,14 +459,15 @@ void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
     if (payload->type == EspNowMsgType::Ping) {
       String senderMac = String(macStr);
       if (config.peerMac != senderMac) {
-        GateLog::info("ESP-NOW", "Auto-discovered start gate: " + senderMac);
+        GateLog::info("ESP-NOW", "Auto-discovered start gate: " + senderMac + " (was: " + config.peerMac + ")");
         config.peerMac = senderMac;
         memcpy(peerMacBytes, mac, 6);
         registerEspNowPeer(peerMacBytes);
         espNowReady = true;
         config = configStore.save(config);
-        GateLog::info("ESP-NOW", "Peer set to start gate: " + senderMac);
+        GateLog::info("ESP-NOW", "Peer updated to: " + senderMac);
       }
+      // Always respond to pings so start gate knows we're alive
       return;
     }
 
@@ -485,6 +501,8 @@ void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
     unsigned long T4 = millis();
     unsigned long T1 = payload->timestampMs;   // our original T1 echoed back
     unsigned long rttMs = T4 - T1;
+    lastRttMs = rttMs;
+    lastSyncAtMs = T4;
     // Send confirm with our current time and the RTT
     sendEspNowMsg(EspNowMsgType::SyncConfirm, mac, millis(), rttMs);
     GateLog::info("SYNC", "Confirmed: RTT=" + String(rttMs) + "ms");
@@ -507,10 +525,9 @@ void initEspNow() {
   }
   esp_now_register_recv_cb(onEspNowRecv);
 
-  // Start gate: register broadcast peer for pings
-  if (config.role == GateRole::Start) {
-    registerEspNowPeer(BROADCAST_MAC);
-  }
+  // Register broadcast peer on all gates so they can receive broadcasts
+  registerEspNowPeer(BROADCAST_MAC);
+  GateLog::info("ESP-NOW", "Channel=" + String(config.wifiChannel));
 
   // If we already have a saved peer, register it
   if (config.peerMac.length() == 17 && parseMac(config.peerMac, peerMacBytes)) {
@@ -912,16 +929,43 @@ void sendPeerCommandOk(const char* message, bool sent = true) {
   sendJson(200, payload);
 }
 
+void sendNoCacheHeaders() {
+  server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server.sendHeader("Pragma", "no-cache");
+}
+
 void handleRoot() {
+  sendNoCacheHeaders();
   server.send_P(200, "text/html; charset=utf-8", (const char*)index_html_data, sizeof(index_html_data));
 }
 
 void handleStylesCss() {
+  sendNoCacheHeaders();
   server.send_P(200, "text/css", (const char*)styles_css_data, sizeof(styles_css_data));
 }
 
 void handleMainJs() {
+  sendNoCacheHeaders();
   server.send_P(200, "application/javascript", (const char*)main_js_data, sizeof(main_js_data));
+}
+
+void sendMarkdownDoc(const uint8_t* data, size_t len) {
+  sendNoCacheHeaders();
+  server.send_P(200, "text/markdown; charset=utf-8", (const char*)data, len);
+}
+
+void handleDocsApi() { sendMarkdownDoc(docs_api_md_data, sizeof(docs_api_md_data)); }
+void handleDocsCurlExamples() { sendMarkdownDoc(docs_curl_examples_md_data, sizeof(docs_curl_examples_md_data)); }
+void handleDocsApiStatus() { sendMarkdownDoc(docs_api_status_md_data, sizeof(docs_api_status_md_data)); }
+void handleDocsApiRiders() { sendMarkdownDoc(docs_api_riders_md_data, sizeof(docs_api_riders_md_data)); }
+void handleDocsApiConfig() { sendMarkdownDoc(docs_api_config_md_data, sizeof(docs_api_config_md_data)); }
+void handleDocsApiWifi() { sendMarkdownDoc(docs_api_wifi_md_data, sizeof(docs_api_wifi_md_data)); }
+void handleDocsApiTime() { sendMarkdownDoc(docs_api_time_md_data, sizeof(docs_api_time_md_data)); }
+void handleDocsApiMac() { sendMarkdownDoc(docs_api_mac_md_data, sizeof(docs_api_mac_md_data)); }
+
+void handleDocsOpenApiJson() {
+  sendNoCacheHeaders();
+  server.send_P(200, "application/json; charset=utf-8", (const char*)docs_openapi_json_data, sizeof(docs_openapi_json_data));
 }
 
 }  // Close namespace
@@ -1063,6 +1107,74 @@ void handlePostPeerCalibrate() {
   sendPeerCommandOk("ESP-NOW peer calibration command sent");
 }
 
+void handlePostPeerClock() {
+  if (server.method() != HTTP_POST) {
+    sendJsonError(405, "Method not allowed");
+    return;
+  }
+  if (!requireStartGateForPeerCommand() || !requireEspNowForPeerCommand()) return;
+  sendSyncRequest();
+  // Return last known sync data (new sync result will be available on next poll)
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["message"] = "Clock sync request sent";
+  doc["lastRttMs"] = lastRttMs;
+  doc["lastSyncAgoMs"] = lastSyncAtMs > 0 ? millis() - lastSyncAtMs : -1;
+  doc["peerClockOffset"] = clockOffsetMs;
+  doc["peerClockSynced"] = clockSynced;
+  String out;
+  serializeJson(doc, out);
+  sendJson(200, out);
+}
+
+void handleGetPeerClock() {
+  JsonDocument doc;
+  doc["startGateMs"] = millis();
+  doc["lastRttMs"] = lastRttMs;
+  doc["lastSyncAgoMs"] = lastSyncAtMs > 0 ? (long)(millis() - lastSyncAtMs) : -1;
+  doc["peerClockOffset"] = clockOffsetMs;
+  doc["peerClockSynced"] = clockSynced;
+  doc["role"] = gateRoleName(config.role);
+  String out;
+  serializeJson(doc, out);
+  sendJson(200, out);
+}
+
+void sendPingOnAllChannels() {
+  if (!espNowReady) return;
+  GateLog::info("ESP-NOW", "Scanning all channels for peer " + config.peerMac);
+
+  // Remove existing peer registration
+  esp_now_del_peer(peerMacBytes);
+
+  for (uint8_t ch = 1; ch <= 13; ch++) {
+    esp_now_peer_info_t peerInfo = {};
+    memcpy(peerInfo.peer_addr, peerMacBytes, 6);
+    peerInfo.channel = ch;
+    peerInfo.encrypt = false;
+    esp_now_add_peer(&peerInfo);
+
+    sendEspNowMsg(EspNowMsgType::Ping, peerMacBytes, 0, 0);
+    delay(20);
+
+    esp_now_del_peer(peerMacBytes);
+  }
+
+  // Re-register on channel 0 (current channel) for normal operation
+  registerEspNowPeer(peerMacBytes);
+  GateLog::info("ESP-NOW", "Channel scan complete, peer re-registered on current channel");
+}
+
+void handlePostPeerPush() {
+  if (server.method() != HTTP_POST) {
+    sendJsonError(405, "Method not allowed");
+    return;
+  }
+  if (!requireStartGateForPeerCommand() || !requireEspNowForPeerCommand()) return;
+  pendingChannelScan = true;
+  sendPeerCommandOk("Channel scan queued - pinging peer on all 13 channels");
+}
+
 void handlePostPeerRidersSync() {
   if (server.method() != HTTP_POST) {
     sendJsonError(405, "Method not allowed");
@@ -1178,6 +1290,162 @@ void handleGetRuns() {
   sendJson(200, eventStore.getRunsJson(limit));
 }
 
+// --- /api/results: merged live queue + persisted runs ---
+
+void handleGetResults() {
+  int limit = 20;
+  if (server.hasArg("limit")) limit = server.arg("limit").toInt();
+  if (limit < 1) limit = 1;
+  if (limit > 50) limit = 50;
+
+  JsonDocument doc;
+  JsonArray arr = doc.to<JsonArray>();
+
+  // Live queue runs (active/in-progress first)
+  for (size_t i = 0; i < queue.size(); i++) {
+    RunRecord* run = queue.at(i);
+    if (!run) continue;
+    JsonObject obj = arr.add<JsonObject>();
+    obj["runId"] = run->runId;
+    obj["riderId"] = run->riderId;
+    obj["riderName"] = run->riderName;
+    obj["status"] = runStatusName(run->status);
+    obj["live"] = true;
+    if (run->goAtMs > 0 && run->startTriggeredAtMs > 0)
+      obj["reactionMs"] = (long)run->startTriggeredAtMs - (long)run->goAtMs;
+    if (run->startTriggeredAtMs > 0 && run->line2TriggeredAtMs > 0)
+      obj["launchMs"] = (long)(run->line2TriggeredAtMs - run->startTriggeredAtMs);
+    if (run->startTriggeredAtMs > 0 && run->finishTriggeredAtMs > 0)
+      obj["courseMs"] = (long)(run->finishTriggeredAtMs - run->startTriggeredAtMs);
+  }
+
+  // Persisted runs (newest first, already JSON objects from getRunsJson)
+  int persistedLimit = limit - (int)queue.size();
+  if (persistedLimit > 0) {
+    String persisted = eventStore.getRunsJson(persistedLimit);
+    JsonDocument pdoc;
+    deserializeJson(pdoc, persisted);
+    JsonArray parr = pdoc.as<JsonArray>();
+    for (JsonObject prun : parr) {
+      // Skip duplicates (run might be in both queue and persisted)
+      String pRunId = prun["runId"].as<String>();
+      bool dup = false;
+      for (size_t i = 0; i < queue.size(); i++) {
+        RunRecord* qr = queue.at(i);
+        if (qr && qr->runId == pRunId) { dup = true; break; }
+      }
+      if (!dup) {
+        JsonObject obj = arr.add<JsonObject>();
+        for (JsonPair kv : prun) obj[kv.key()] = kv.value();
+        obj["live"] = false;
+      }
+    }
+  }
+
+  String out;
+  serializeJson(doc, out);
+  sendJson(200, out);
+}
+
+void handlePostResults() {
+  if (server.method() != HTTP_POST) {
+    sendJsonError(405, "Method not allowed");
+    return;
+  }
+  if (config.role != GateRole::Start) {
+    sendJsonError(409, "Start gate only");
+    return;
+  }
+  JsonDocument body;
+  if (deserializeJson(body, server.arg("plain"))) {
+    sendJsonError(400, "Invalid JSON");
+    return;
+  }
+  String tagId = body["tagId"] | "";
+  if (tagId.length() == 0) {
+    sendJsonError(400, "tagId required");
+    return;
+  }
+  startRunForRider(tagId);
+  // Return current active run info
+  if (activeRunId.length() > 0) {
+    RunRecord* run = queue.find(activeRunId);
+    if (run) {
+      JsonDocument resp;
+      resp["ok"] = true;
+      resp["runId"] = run->runId;
+      resp["riderName"] = run->riderName;
+      resp["status"] = runStatusName(run->status);
+      String out;
+      serializeJson(resp, out);
+      sendJson(200, out);
+      return;
+    }
+  }
+  sendJson(200, R"({"ok":true,"message":"Run started or re-scan cancelled previous"})");
+}
+
+void handlePostResultsStop() {
+  if (server.method() != HTTP_POST) {
+    sendJsonError(405, "Method not allowed");
+    return;
+  }
+  if (activeRunId.length() == 0) {
+    sendJsonError(409, "No active run");
+    return;
+  }
+  RunRecord* run = queue.find(activeRunId);
+  if (run) {
+    run->status = RunStatus::Cancelled;
+    eventStore.logEvent("run_cancelled", activeRunId, run->riderId, millis());
+    GateLog::info("RUN", "Run cancelled via API: " + activeRunId);
+  }
+  activeRunId = "";
+  falseStartDetected = false;
+  falseStartTriggeredAtMs = 0;
+  noTone(BUZZER_PIN);
+  unfreezeBaseline();
+  queue.removeTerminal();
+  sendJson(200, R"({"ok":true,"message":"Active run cancelled"})");
+}
+
+void handleDeleteResults() {
+  if (server.method() != HTTP_DELETE) {
+    sendJsonError(405, "Method not allowed");
+    return;
+  }
+  JsonDocument body;
+  if (deserializeJson(body, server.arg("plain"))) {
+    sendJsonError(400, "Invalid JSON");
+    return;
+  }
+  String runId = body["runId"] | "";
+  if (runId.length() == 0) {
+    sendJsonError(400, "runId required");
+    return;
+  }
+  // Check live queue first
+  RunRecord* live = queue.find(runId);
+  if (live) {
+    if (live->runId == activeRunId) {
+      activeRunId = "";
+      falseStartDetected = false;
+      falseStartTriggeredAtMs = 0;
+      noTone(BUZZER_PIN);
+      unfreezeBaseline();
+    }
+    queue.remove(runId);
+    sendJson(200, R"({"ok":true,"source":"live"})");
+    return;
+  }
+  // Try persisted
+  if (eventStore.deleteRun(runId)) {
+    sendJson(200, R"({"ok":true,"source":"persisted"})");
+    return;
+  }
+  sendJsonError(404, "Run not found");
+}
+
 void handleGetStorage() {
   sendJson(200, eventStore.getStorageJson());
 }
@@ -1226,6 +1494,15 @@ void configureWebServer() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/styles.css", HTTP_GET, handleStylesCss);
   server.on("/main.js", HTTP_GET, handleMainJs);
+  server.on("/docs/API.md", HTTP_GET, handleDocsApi);
+  server.on("/docs/openapi.json", HTTP_GET, handleDocsOpenApiJson);
+  server.on("/docs/CURL_EXAMPLES.md", HTTP_GET, handleDocsCurlExamples);
+  server.on("/docs/API_STATUS.md", HTTP_GET, handleDocsApiStatus);
+  server.on("/docs/API_RIDERS.md", HTTP_GET, handleDocsApiRiders);
+  server.on("/docs/API_CONFIG.md", HTTP_GET, handleDocsApiConfig);
+  server.on("/docs/API_WIFI.md", HTTP_GET, handleDocsApiWifi);
+  server.on("/docs/API_TIME.md", HTTP_GET, handleDocsApiTime);
+  server.on("/docs/API_MAC.md", HTTP_GET, handleDocsApiMac);
 
   // REST API endpoints
   server.on("/api/status", HTTP_GET, handleStatusApi);
@@ -1240,12 +1517,19 @@ void configureWebServer() {
   server.on("/api/peer/ping", HTTP_POST, handlePostPeerPing);
   server.on("/api/peer/sync", HTTP_POST, handlePostPeerSync);
   server.on("/api/peer/calibrate", HTTP_POST, handlePostPeerCalibrate);
+  server.on("/api/peer/clock", HTTP_POST, handlePostPeerClock);
+  server.on("/api/peer/clock", HTTP_GET, handleGetPeerClock);
+  server.on("/api/peer/push", HTTP_POST, handlePostPeerPush);
   server.on("/api/peer/riders/sync", HTTP_POST, handlePostPeerRidersSync);
   server.on("/api/reboot", HTTP_POST, handlePostReboot);
   server.on("/api/calibrate", HTTP_POST, handlePostCalibrate);
   server.on("/api/calibrate/status", HTTP_GET, handleGetCalibrateStatus);
   
   // Event/storage endpoints
+  server.on("/api/results", HTTP_GET, handleGetResults);
+  server.on("/api/results", HTTP_POST, handlePostResults);
+  server.on("/api/results/stop", HTTP_POST, handlePostResultsStop);
+  server.on("/api/results", HTTP_DELETE, handleDeleteResults);
   server.on("/api/events", HTTP_GET, handleGetEvents);
   server.on("/api/runs", HTTP_GET, handleGetRuns);
   server.on("/api/storage", HTTP_GET, handleGetStorage);
@@ -1280,6 +1564,7 @@ void handleSerialCommand(const String& rawCommand) {
 
   if (command.startsWith("api config/wifi ")) {
     printApiResponse(updateWifiConfigFromJson(command.substring(16)));
+    pendingNetworkRestart = true;
     return;
   }
 
@@ -1370,6 +1655,13 @@ void handleSerialCommand(const String& rawCommand) {
   if (command.equalsIgnoreCase("wifi")) {
     printWifiStatus();
     printStatus();
+    return;
+  }
+
+  if (command.equalsIgnoreCase("reboot")) {
+    GateLog::print("Rebooting...");
+    delay(500);
+    ESP.restart();
     return;
   }
 
@@ -1513,7 +1805,18 @@ void handleStartGateLoop(unsigned long now) {
   }
 
   // OnCourse → waiting for finish gate (handled by onFinishReceived callback)
+  // Timeout after 5 minutes to prevent stuck runs when finish gate loses state
   if (run->status == RunStatus::OnCourse) {
+    constexpr unsigned long ONCOURSE_TIMEOUT_MS = 5UL * 60UL * 1000UL;
+    if (run->startTriggeredAtMs > 0 && (now - run->startTriggeredAtMs) > ONCOURSE_TIMEOUT_MS) {
+      GateLog::info("RUN", "OnCourse timeout after 5 min - no finish received for " + run->runId);
+      run->status = RunStatus::TimedOut;
+      eventStore.logEvent("run_timed_out", run->runId, run->riderId, now);
+      activeRunId = "";
+      noTone(BUZZER_PIN);
+      unfreezeBaseline();
+      queue.removeTerminal();
+    }
     return;
   }
 
@@ -1536,8 +1839,12 @@ void handleStartGateLoop(unsigned long now) {
 bool finishTriggered = false;
 unsigned long finishCooldownUntil = 0;
 constexpr unsigned long FINISH_COOLDOWN_MS = 5000;  // 5s lockout after trigger
+unsigned long lastFinishDiagAt = 0;
 
 void handleFinishGateLoop() {
+  // Skip sensor checks during calibration to avoid false triggers
+  if (cal.state != CalState::Idle && cal.state != CalState::Done) return;
+
   if (finishTriggered) {
     if (millis() > finishCooldownUntil) {
       finishTriggered = false;
@@ -1546,6 +1853,17 @@ void handleFinishGateLoop() {
       GateLog::info("FINISH", "Ready for next trigger");
     }
     return;  // Skip ALL sensor reads during cooldown
+  }
+
+  // Periodic diagnostics every 10s
+  if (millis() - lastFinishDiagAt >= 10000) {
+    lastFinishDiagAt = millis();
+    float v = readSensorVoltage(SENSOR_LINE1_PIN);
+    float bl = getBaseline();
+    GateLog::info("FINISH", "Sensor: v=" + String(v, 2) + "V baseline=" + String(bl, 2) +
+      "V delta=" + String(triggerDelta, 2) + "V threshold=" + String(bl + triggerDelta, 2) +
+      "V espNow=" + String(espNowReady ? "yes" : "NO") +
+      " peer=" + config.peerMac);
   }
 
   if (sensorTriggered(SENSOR_LINE1_PIN)) {
@@ -1652,6 +1970,11 @@ void loop() {
     startCalibration(false);
   }
 
+  if (pendingChannelScan) {
+    pendingChannelScan = false;
+    sendPingOnAllChannels();
+  }
+
   updateCalibration();
 
   const unsigned long now = millis();
@@ -1668,7 +1991,11 @@ void loop() {
   // Start gate: broadcast ping every 10s for auto-discovery
   if (config.role == GateRole::Start && now - lastPingAt >= PING_INTERVAL_MS) {
     lastPingAt = now;
-    sendPing();
+    sendPing();  // broadcast to FF:FF:FF:FF:FF:FF
+    // Also send directed ping to known peer — works even if channels differ
+    if (espNowReady) {
+      sendEspNowMsg(EspNowMsgType::Ping, peerMacBytes, 0, 0);
+    }
     // Sync riders every 5th ping (~50s) so late-joining gates get the list
     static uint8_t pingCount = 0;
     if (++pingCount >= 5) {

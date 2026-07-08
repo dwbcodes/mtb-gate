@@ -31,6 +31,10 @@ function navigateTo(page) {
   document.querySelectorAll('.nav-link').forEach(link => {
     link.classList.toggle('active', link.dataset.page === page);
   });
+
+  if (page === 'docs') {
+    loadSelectedDoc();
+  }
 }
 
 function isStartGate() {
@@ -59,7 +63,7 @@ function applyRoleUi(role) {
   if (roleNotice) roleNotice.hidden = start;
 
   const activePage = window.location.hash.slice(1);
-  if (activePage && pageRequiresStart(activePage)) {
+  if (!start && activePage && pageRequiresStart(activePage)) {
     window.location.hash = 'results';
     navigateTo('results');
   }
@@ -121,54 +125,23 @@ async function loadStatus() {
       document.getElementById('connectedStartMac').textContent = espNow.peerMac || 'Not yet discovered';
     }
 
-    // Fetch persisted completed runs from LittleFS
-    let recentRuns = [];
+    // Fetch merged results (live queue + persisted)
+    let results = [];
     try {
-      recentRuns = await apiJson('/api/runs?limit=10');
+      results = await apiJson('/api/results?limit=20');
     } catch (_) { /* ignore if not available */ }
 
-    renderAttempts(status.queue || [], recentRuns);
+    renderResults(results);
   } catch (err) {
     console.error('Failed to load status:', err);
   }
 }
 
-function renderAttempts(liveQueue, recentRuns) {
+function renderResults(results) {
   const container = document.getElementById('attempts');
   container.replaceChildren();
 
-  // Show active/queued runs from live queue (non-finished)
-  const activeRuns = liveQueue.filter(a => String(a.status).toLowerCase() !== 'finished');
-  // Finished runs from live queue (just completed, not yet persisted)
-  const liveFinished = liveQueue.filter(a => String(a.status).toLowerCase() === 'finished');
-
-  // Merge: live finished + persisted runs, dedup by runId, newest first, cap at 10
-  const seenIds = new Set();
-  const completedRuns = [];
-  for (const run of liveFinished) {
-    if (!seenIds.has(run.runId)) {
-      seenIds.add(run.runId);
-      completedRuns.push({
-        riderName: run.riderName || run.riderId,
-        status: 'Finished',
-        reactionMs: run.metrics?.reactionMs ?? null,
-        launchMs: run.metrics?.launchMs ?? null,
-        courseMs: run.metrics?.courseMs ?? null,
-        falseStart: false
-      });
-    }
-  }
-  // Persisted runs are newest-last from the API; reverse to get newest first
-  for (const run of [...recentRuns].reverse()) {
-    if (!seenIds.has(run.runId)) {
-      seenIds.add(run.runId);
-      completedRuns.push(run);
-    }
-  }
-  // Cap at 10
-  completedRuns.splice(10);
-
-  if (activeRuns.length === 0 && completedRuns.length === 0) {
+  if (results.length === 0) {
     const p = document.createElement('p');
     p.style.cssText = 'color: var(--muted); padding: 20px 0; text-align: center;';
     p.textContent = 'No attempts yet';
@@ -176,32 +149,20 @@ function renderAttempts(liveQueue, recentRuns) {
     return;
   }
 
-  // Render active runs first
-  for (const attempt of activeRuns) {
-    container.appendChild(renderAttemptCard(
-      attempt.riderName || attempt.riderId,
-      attempt.status,
-      attempt.metrics?.reactionMs,
-      attempt.metrics?.launchMs,
-      attempt.metrics?.courseMs,
-      false
-    ));
-  }
+  for (const run of results) {
+    const name = run.riderName || run.riderId || '—';
+    const status = run.status || (run.falseStart ? 'False Start' : 'Finished');
+    const reactionMs = run.reactionMs ?? (run.metrics?.reactionMs ?? null);
+    const courseMs = run.courseMs ?? (run.metrics?.courseMs ?? null);
+    const falseStart = run.falseStart || false;
 
-  // Render completed runs
-  for (const run of completedRuns) {
     container.appendChild(renderAttemptCard(
-      run.riderName || run.riderId || '—',
-      run.falseStart ? 'False Start' : 'Finished',
-      run.reactionMs,
-      run.launchMs,
-      run.courseMs,
-      run.falseStart
+      name, status, reactionMs, courseMs, falseStart, run.runId, run.live
     ));
   }
 }
 
-function renderAttemptCard(name, status, reactionMs, launchMs, courseMs, falseStart) {
+function renderAttemptCard(name, status, reactionMs, courseMs, falseStart, runId, live) {
   const article = document.createElement('article');
   article.className = 'attempt';
 
@@ -214,7 +175,7 @@ function renderAttemptCard(name, status, reactionMs, launchMs, courseMs, falseSt
   info.appendChild(h3);
   info.appendChild(statusP);
 
-  // Gate Time: reaction from GO to start trigger (negative if false start)
+  // Gate Time: reaction from GO to start trigger
   let gateTimeMs = reactionMs;
   let gateLabel = 'Gate Time';
   let gateDisplay = formatMs(gateTimeMs);
@@ -223,22 +184,32 @@ function renderAttemptCard(name, status, reactionMs, launchMs, courseMs, falseSt
     gateLabel = 'Penalty';
   }
 
-  // Course Time: start trigger to finish (pure sensor-to-sensor)
+  // Course Time: trigger to finish (sensor-to-sensor)
   const courseDisplay = formatMs(courseMs);
 
-  // Total: GO to finish with penalties
+  // Total: with penalty → trigger-to-finish only; without → GO-to-finish
   let totalMs = null;
-  if (reactionMs != null && courseMs != null) {
-    totalMs = reactionMs + courseMs + (falseStart ? 5000 : 0);
+  if (falseStart && courseMs != null) {
+    totalMs = courseMs;
+  } else if (reactionMs != null && courseMs != null) {
+    totalMs = reactionMs + courseMs;
   }
-  const totalDisplay = formatMs(totalMs);
+
+  // Potential: without penalty → trigger-to-finish; with penalty → GO-to-finish (what it could have been)
+  let potentialMs = null;
+  if (falseStart && reactionMs != null && courseMs != null) {
+    potentialMs = reactionMs + courseMs;
+  } else if (!falseStart && courseMs != null) {
+    potentialMs = courseMs;
+  }
 
   const metricsDiv = document.createElement('div');
   metricsDiv.className = 'metrics';
   for (const [label, value, display] of [
     [gateLabel, gateTimeMs, gateDisplay],
     ['Course', courseMs, courseDisplay],
-    ['Total', totalMs, totalDisplay]
+    ['Total', totalMs, formatMs(totalMs)],
+    ['Potential', potentialMs, formatMs(potentialMs)]
   ]) {
     const cell = document.createElement('div');
     const span = document.createElement('span');
@@ -251,6 +222,33 @@ function renderAttemptCard(name, status, reactionMs, launchMs, courseMs, falseSt
     metricsDiv.appendChild(cell);
   }
 
+  // Action buttons
+  if (runId && isStartGate()) {
+    const actions = document.createElement('div');
+    actions.className = 'attempt-actions';
+    if (live && status !== 'Finished' && status !== 'Cancelled') {
+      const stopBtn = document.createElement('button');
+      stopBtn.className = 'btn-danger btn-small';
+      stopBtn.textContent = 'Stop';
+      stopBtn.addEventListener('click', () => stopRun());
+      actions.appendChild(stopBtn);
+    }
+    if (live) {
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'btn-danger btn-small';
+      removeBtn.textContent = 'Remove';
+      removeBtn.addEventListener('click', () => removeRun(runId));
+      actions.appendChild(removeBtn);
+    } else {
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn-secondary btn-small';
+      delBtn.textContent = 'Delete';
+      delBtn.addEventListener('click', () => deleteRun(runId));
+      actions.appendChild(delBtn);
+    }
+    info.appendChild(actions);
+  }
+
   article.appendChild(info);
   article.appendChild(metricsDiv);
   return article;
@@ -259,6 +257,34 @@ function renderAttemptCard(name, status, reactionMs, launchMs, courseMs, falseSt
 function formatMs(value) {
   if (value == null) return 'Pending';
   return (value / 1000).toFixed(3) + 's';
+}
+
+async function stopRun() {
+  try {
+    await apiJson('/api/results/stop', { method: 'POST' });
+    loadStatus();
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
+}
+
+async function removeRun(runId) {
+  try {
+    await apiJson('/api/results', jsonOptions('DELETE', { runId }));
+    loadStatus();
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
+}
+
+async function deleteRun(runId) {
+  if (!confirm('Delete this result?')) return;
+  try {
+    await apiJson('/api/results', jsonOptions('DELETE', { runId }));
+    loadStatus();
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
 }
 
 // RIDERS PAGE
@@ -586,6 +612,165 @@ async function restoreConfig(file) {
 }
 
 // API DOCS PAGE
+let loadedDocUrl = null;
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function renderInlineMarkdown(value) {
+  return escapeHtml(value)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<span>$1</span>');
+}
+
+function renderMarkdownTable(lines) {
+  const rows = lines
+    .filter((line, index) => index !== 1)
+    .map((line) => line.trim().replace(/^\||\|$/g, '').split('|').map((cell) => renderInlineMarkdown(cell.trim())));
+  if (rows.length === 0) return '';
+
+  const [headers, ...bodyRows] = rows;
+  const head = '<thead><tr>' + headers.map((cell) => '<th>' + cell + '</th>').join('') + '</tr></thead>';
+  const body = '<tbody>' + bodyRows.map((row) => '<tr>' + row.map((cell) => '<td>' + cell + '</td>').join('') + '</tr>').join('') + '</tbody>';
+  return '<div class="doc-table-wrap"><table>' + head + body + '</table></div>';
+}
+
+function renderMarkdown(text) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const html = [];
+  let paragraph = [];
+  let list = [];
+  let code = [];
+  let inCode = false;
+
+  function flushParagraph() {
+    if (paragraph.length === 0) return;
+    html.push('<p>' + renderInlineMarkdown(paragraph.join(' ')) + '</p>');
+    paragraph = [];
+  }
+
+  function flushList() {
+    if (list.length === 0) return;
+    html.push('<ul>' + list.map((item) => '<li>' + renderInlineMarkdown(item) + '</li>').join('') + '</ul>');
+    list = [];
+  }
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+
+    if (line.startsWith('```')) {
+      if (inCode) {
+        html.push('<pre><code>' + escapeHtml(code.join('\n')) + '</code></pre>');
+        code = [];
+        inCode = false;
+      } else {
+        flushParagraph();
+        flushList();
+        inCode = true;
+      }
+      continue;
+    }
+
+    if (inCode) {
+      code.push(line);
+      continue;
+    }
+
+    if (/^\|.+\|$/.test(line) && /^\|[-:\s|]+\|$/.test(lines[index + 1] || '')) {
+      flushParagraph();
+      flushList();
+      const tableLines = [line, lines[index + 1]];
+      index += 2;
+      while (index < lines.length && /^\|.+\|$/.test(lines[index])) {
+        tableLines.push(lines[index]);
+        index += 1;
+      }
+      index -= 1;
+      html.push(renderMarkdownTable(tableLines));
+      continue;
+    }
+
+    if (!line.trim()) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const level = heading[1].length + 1;
+      html.push('<h' + level + '>' + renderInlineMarkdown(heading[2]) + '</h' + level + '>');
+      continue;
+    }
+
+    const bullet = /^-\s+(.+)$/.exec(line);
+    if (bullet) {
+      flushParagraph();
+      list.push(bullet[1]);
+      continue;
+    }
+
+    paragraph.push(line.trim());
+  }
+
+  flushParagraph();
+  flushList();
+  if (inCode && code.length > 0) {
+    html.push('<pre><code>' + escapeHtml(code.join('\n')) + '</code></pre>');
+  }
+
+  return html.join('');
+}
+
+async function loadDoc(button) {
+  const targetButton = button || document.querySelector('.doc-tab.active') || document.querySelector('.doc-tab');
+  if (!targetButton) return;
+  if (loadedDocUrl === targetButton.dataset.docUrl) return;
+
+  const titleEl = document.getElementById('docTitle');
+  const statusEl = document.getElementById('docStatus');
+  const contentEl = document.getElementById('docContent');
+
+  loadedDocUrl = targetButton.dataset.docUrl;
+  document.querySelectorAll('.doc-tab').forEach((tab) => tab.classList.toggle('active', tab === targetButton));
+  titleEl.textContent = targetButton.dataset.docTitle || targetButton.textContent;
+  statusEl.textContent = 'Loading...';
+  contentEl.textContent = '';
+
+  try {
+    const response = await fetch(targetButton.dataset.docUrl);
+    if (!response.ok) {
+      throw new Error('HTTP ' + response.status + ' ' + response.statusText);
+    }
+
+    const text = await response.text();
+    if (targetButton.dataset.docType === 'json') {
+      const formatted = JSON.stringify(JSON.parse(text), null, 2);
+      contentEl.innerHTML = '<pre><code>' + escapeHtml(formatted) + '</code></pre>';
+    } else {
+      contentEl.innerHTML = renderMarkdown(text);
+    }
+    statusEl.textContent = targetButton.dataset.docUrl;
+  } catch (err) {
+    loadedDocUrl = null;
+    statusEl.textContent = 'Error';
+    contentEl.textContent = 'Failed to load documentation: ' + err.message;
+  }
+}
+
+function loadSelectedDoc() {
+  loadDoc();
+}
+
 async function testApiEndpoint(endpoint) {
   const resultEl = document.getElementById('apiTestResult');
   resultEl.style.display = 'block';
@@ -606,6 +791,56 @@ async function testApiEndpoint(endpoint) {
 }
 
 // PEER COMMANDS PAGE
+async function refreshPeerStatus() {
+  try {
+    const status = await apiJson('/api/status');
+    const espNow = status.espNow || {};
+    const peerToolMac = document.getElementById('peerToolMac');
+    const peerToolStatus = document.getElementById('peerToolStatus');
+    if (peerToolMac) peerToolMac.textContent = espNow.peerMac || 'Not configured';
+    if (peerToolStatus) peerToolStatus.textContent = espNow.connected ? 'Connected' : 'Not connected';
+  } catch (_) { /* ignore */ }
+
+  try {
+    const clock = await apiJson('/api/peer/clock');
+    const rttEl = document.getElementById('peerRtt');
+    const offsetEl = document.getElementById('peerClockOffset');
+    if (rttEl) rttEl.textContent = clock.lastRttMs > 0 ? clock.lastRttMs + 'ms' : 'Not measured';
+    if (offsetEl) {
+      if (clock.peerClockSynced) {
+        offsetEl.textContent = clock.peerClockOffset + 'ms';
+      } else {
+        offsetEl.textContent = 'Not synced';
+      }
+    }
+  } catch (_) { /* ignore */ }
+}
+
+async function checkPeerClock() {
+  const resultEl = document.getElementById('peerResult');
+  resultEl.style.display = 'block';
+  resultEl.textContent = 'Sending clock sync request...';
+
+  try {
+    const response = await fetch('/api/peer/clock', { method: 'POST' });
+    const data = await response.json().catch(() => ({}));
+    resultEl.textContent = 'HTTP ' + response.status + '\n\n' + JSON.stringify(data, null, 2);
+
+    // Wait 1s for the sync response to arrive, then refresh
+    setTimeout(async () => {
+      const clock = await apiJson('/api/peer/clock');
+      const rttEl = document.getElementById('peerRtt');
+      const offsetEl = document.getElementById('peerClockOffset');
+      if (rttEl) rttEl.textContent = clock.lastRttMs > 0 ? clock.lastRttMs + 'ms' : 'Not measured';
+      if (offsetEl) offsetEl.textContent = clock.peerClockSynced ? clock.peerClockOffset + 'ms' : 'Not synced';
+
+      resultEl.textContent += '\n\n--- Updated after sync ---\n' + JSON.stringify(clock, null, 2);
+    }, 1500);
+  } catch (err) {
+    resultEl.textContent = 'Error: ' + err.message;
+  }
+}
+
 async function sendPeerCommand(endpoint, button) {
   const resultEl = document.getElementById('peerResult');
 
@@ -618,7 +853,7 @@ async function sendPeerCommand(endpoint, button) {
     const response = await fetch(endpoint, { method: 'POST' });
     const data = await response.json().catch(() => ({}));
     resultEl.textContent = 'HTTP ' + response.status + ' ' + response.statusText + '\n\n' + JSON.stringify(data, null, 2);
-    await loadStatus();
+    await refreshPeerStatus();
   } catch (err) {
     resultEl.textContent = 'Error: ' + err.message;
   } finally {
@@ -644,6 +879,9 @@ document.getElementById('calibrateAllBtn').addEventListener('click', startSensor
 document.getElementById('testStatus').addEventListener('click', () => testApiEndpoint('status'));
 document.getElementById('testRiders').addEventListener('click', () => testApiEndpoint('riders'));
 document.getElementById('testPing').addEventListener('click', () => testApiEndpoint('ping'));
+document.querySelectorAll('.doc-tab').forEach((button) => {
+  button.addEventListener('click', () => loadDoc(button));
+});
 
 document.getElementById('rebootBtn').addEventListener('click', rebootDevice);
 document.getElementById('factoryResetBtn').addEventListener('click', factoryReset);
@@ -656,6 +894,7 @@ document.getElementById('restoreConfigFile').addEventListener('change', (e) => {
 document.querySelectorAll('[data-peer-command]').forEach((button) => {
   button.addEventListener('click', () => sendPeerCommand(button.dataset.peerCommand, button));
 });
+document.getElementById('checkClockBtn').addEventListener('click', checkPeerClock);
 
 // Initialize
 const initialPage = window.location.hash.slice(1);

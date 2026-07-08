@@ -67,6 +67,27 @@ for (const port of getHarnessConfig().ports) {
       expect(contentType.includes("javascript") || contentType.includes("text/javascript") || contentType.includes("application/javascript")).toBeTruthy();
     });
 
+    test("@api-endpoints documentation links are served", async () => {
+      const docs = [
+        "/docs/API.md",
+        "/docs/openapi.json",
+        "/docs/CURL_EXAMPLES.md",
+        "/docs/API_STATUS.md",
+        "/docs/API_RIDERS.md",
+        "/docs/API_CONFIG.md",
+        "/docs/API_WIFI.md",
+        "/docs/API_TIME.md",
+        "/docs/API_MAC.md"
+      ];
+
+      for (const path of docs) {
+        const res = await api.get(path);
+        expect(res.ok(), `${path} should be served`).toBeTruthy();
+        const text = await res.text();
+        expect(text.length, `${path} should not be empty`).toBeGreaterThan(20);
+      }
+    });
+
     // --- Calibrate ---
 
     test("@api-endpoints POST /api/calibrate returns ok", async () => {

@@ -55,6 +55,19 @@ bool RunQueue::stampLine2(const String& runId, unsigned long ms) {
   return true;
 }
 
+bool RunQueue::remove(const String& runId) {
+  for (size_t i = 0; i < count_; i++) {
+    if (runs_[i].runId == runId) {
+      for (size_t j = i; j + 1 < count_; j++) {
+        runs_[j] = runs_[j + 1];
+      }
+      count_--;
+      return true;
+    }
+  }
+  return false;
+}
+
 void RunQueue::removeTerminal() {
   size_t write = 0;
   for (size_t read = 0; read < count_; read++) {

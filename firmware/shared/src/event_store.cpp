@@ -457,3 +457,54 @@ void EventStore::pruneOldSessions(size_t keepCount) {
     GateLog::info("EVENTS", "Pruned session " + String(sessions[i]));
   }
 }
+
+bool EventStore::deleteRun(const String& runId) {
+  if (!mounted_ || runId.length() == 0) return false;
+
+  // Collect session numbers
+  int sessions[100];
+  int sessCount = 0;
+  File eventsDir = LittleFS.open("/events");
+  if (eventsDir && eventsDir.isDirectory()) {
+    File entry = eventsDir.openNextFile();
+    while (entry && sessCount < 100) {
+      if (entry.isDirectory()) {
+        String name = String(entry.name());
+        int dashIdx = name.lastIndexOf('-');
+        if (dashIdx >= 0) sessions[sessCount++] = name.substring(dashIdx + 1).toInt();
+      }
+      entry = eventsDir.openNextFile();
+    }
+  }
+
+  for (int s = 0; s < sessCount; s++) {
+    char pathBuf[64];
+    snprintf(pathBuf, sizeof(pathBuf), "/events/session-%03d/runs.jsonl", sessions[s]);
+    String path = String(pathBuf);
+    File f = LittleFS.open(path, "r");
+    if (!f) continue;
+
+    // Read all lines, skip the one matching runId
+    String kept = "";
+    bool found = false;
+    while (f.available()) {
+      String line = f.readStringUntil('\n');
+      line.trim();
+      if (line.length() == 0) continue;
+      if (line.indexOf("\"" + runId + "\"") >= 0) {
+        found = true;
+        continue;
+      }
+      kept += line + "\n";
+    }
+    f.close();
+
+    if (found) {
+      File out = LittleFS.open(path, "w");
+      if (out) { out.print(kept); out.close(); }
+      GateLog::info("EVENTS", "Deleted run " + runId);
+      return true;
+    }
+  }
+  return false;
+}

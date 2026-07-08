@@ -23,6 +23,9 @@ public:
   String getSessionsJson();
   String getSessionFile(int sessionNum, const String& filename);
 
+  // Run management
+  bool deleteRun(const String& runId);
+
   // Storage management
   void pruneOldSessions(size_t keepCount = 5);
 
