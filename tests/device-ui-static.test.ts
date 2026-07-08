@@ -10,6 +10,22 @@ function readUiFile(file: string) {
 }
 
 describe("device UI static contract", () => {
+  it("embeds compressed UI assets for firmware serving", () => {
+    const header = readFileSync(join(root, "firmware/shared/include/device_ui.h"), "utf8");
+    const firmware = readFileSync(join(root, "firmware/gate/src/main.cpp"), "utf8");
+
+    assert.match(header, /gzip-compressed PROGMEM byte arrays/);
+    assert.match(header, /index\.html \(\d+ raw bytes, \d+ minified bytes, \d+ gzip bytes\)/);
+    assert.match(header, /const uint8_t index_html_data\[\] PROGMEM = \{\n  0x1f, 0x8b/);
+    assert.match(firmware, /server\.sendHeader\("Content-Encoding", "gzip"\)/);
+
+    const sourceBytes = readUiFile("index.html").length + readUiFile("styles.css").length + readUiFile("main.js").length;
+    const gzipBytes = [...header.matchAll(/, (\d+) gzip bytes\)/g)]
+      .slice(0, 3)
+      .reduce((total, match) => total + Number(match[1]), 0);
+    assert.ok(gzipBytes < sourceBytes * 0.7, `expected gzip UI bytes ${gzipBytes} to be at least 30% smaller than ${sourceBytes}`);
+  });
+
   it("keeps start-only rider surfaces marked for role-specific hiding", () => {
     const html = readUiFile("index.html");
 

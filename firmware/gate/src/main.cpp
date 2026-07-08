@@ -973,28 +973,30 @@ void sendPeerCommandOk(const char* message, bool sent = true) {
 }
 
 void sendNoCacheHeaders() {
-  server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server.sendHeader("Cache-Control", "no-cache, must-revalidate");
   server.sendHeader("Pragma", "no-cache");
 }
 
-void handleRoot() {
+void sendCompressedAsset(int statusCode, const char* contentType, const uint8_t* data, size_t len) {
   sendNoCacheHeaders();
-  server.send_P(200, "text/html; charset=utf-8", (const char*)index_html_data, sizeof(index_html_data));
+  server.sendHeader("Content-Encoding", "gzip");
+  server.send_P(statusCode, contentType, (const char*)data, len);
+}
+
+void handleRoot() {
+  sendCompressedAsset(200, "text/html; charset=utf-8", index_html_data, index_html_len);
 }
 
 void handleStylesCss() {
-  sendNoCacheHeaders();
-  server.send_P(200, "text/css", (const char*)styles_css_data, sizeof(styles_css_data));
+  sendCompressedAsset(200, "text/css", styles_css_data, styles_css_len);
 }
 
 void handleMainJs() {
-  sendNoCacheHeaders();
-  server.send_P(200, "application/javascript", (const char*)main_js_data, sizeof(main_js_data));
+  sendCompressedAsset(200, "application/javascript", main_js_data, main_js_len);
 }
 
 void sendMarkdownDoc(const uint8_t* data, size_t len) {
-  sendNoCacheHeaders();
-  server.send_P(200, "text/markdown; charset=utf-8", (const char*)data, len);
+  sendCompressedAsset(200, "text/markdown; charset=utf-8", data, len);
 }
 
 void handleDocsApi() { sendMarkdownDoc(docs_api_md_data, sizeof(docs_api_md_data)); }
@@ -1007,8 +1009,7 @@ void handleDocsApiTime() { sendMarkdownDoc(docs_api_time_md_data, sizeof(docs_ap
 void handleDocsApiMac() { sendMarkdownDoc(docs_api_mac_md_data, sizeof(docs_api_mac_md_data)); }
 
 void handleDocsOpenApiJson() {
-  sendNoCacheHeaders();
-  server.send_P(200, "application/json; charset=utf-8", (const char*)docs_openapi_json_data, sizeof(docs_openapi_json_data));
+  sendCompressedAsset(200, "application/json; charset=utf-8", docs_openapi_json_data, docs_openapi_json_len);
 }
 
 }  // Close namespace

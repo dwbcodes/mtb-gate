@@ -1,3 +1,4 @@
+import { gzipSync } from "node:zlib";
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
@@ -21,8 +22,49 @@ const assets = [
   ["docs_api_mac_md", docsDir, "API_MAC.md"]
 ];
 
+function minifyText(file, content) {
+  if (file.endsWith(".json")) {
+    return `${JSON.stringify(JSON.parse(content))}\n`;
+  }
+
+  if (file.endsWith(".css")) {
+    return content
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\s+/g, " ")
+      .replace(/\s*([{}:;,>~+])\s*/g, "$1")
+      .replace(/;}/g, "}")
+      .trim();
+  }
+
+  if (file.endsWith(".html")) {
+    return content
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .join(" ")
+      .replace(/>\s+</g, "><");
+  }
+
+  if (file.endsWith(".js")) {
+    return content
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  return content.trimEnd() + "\n";
+}
+
 function bytesFor(dir, file) {
-  return [...readFileSync(join(dir, file))];
+  const content = readFileSync(join(dir, file), "utf8");
+  const minified = minifyText(file, content);
+  return {
+    rawBytes: Buffer.byteLength(content),
+    minifiedBytes: Buffer.byteLength(minified),
+    bytes: [...gzipSync(minified, { level: 9 })]
+  };
 }
 
 function formatBytes(bytes) {
@@ -37,8 +79,8 @@ function formatBytes(bytes) {
 }
 
 const sections = assets.map(([symbol, dir, file]) => {
-  const bytes = bytesFor(dir, file);
-  return `// ${basename(file)} (${bytes.length} bytes)
+  const { rawBytes, minifiedBytes, bytes } = bytesFor(dir, file);
+  return `// ${basename(file)} (${rawBytes} raw bytes, ${minifiedBytes} minified bytes, ${bytes.length} gzip bytes)
 const uint8_t ${symbol}_data[] PROGMEM = {
 ${formatBytes(bytes)}
 };
@@ -53,7 +95,7 @@ writeFileSync(
 
 #include <Arduino.h>
 
-// Device UI files embedded as PROGMEM byte arrays.
+// Device UI files embedded as gzip-compressed PROGMEM byte arrays.
 
 ${sections.join("\n")}
 #endif
