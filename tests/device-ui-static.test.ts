@@ -113,6 +113,17 @@ describe("device UI static contract", () => {
     assert.match(firmware, /server\.on\("\/api\/peer\/riders\/sync", HTTP_POST, handlePostPeerRidersSync\)/);
   });
 
+  it("makes peer rider sync wait for peer roster validation", () => {
+    const firmware = readFileSync(join(root, "firmware/gate/src/main.cpp"), "utf8");
+
+    assert.match(firmware, /RiderSyncAck = 8/);
+    assert.match(firmware, /sendRiderSyncAck\(mac\)/);
+    assert.match(firmware, /pendingRiderSyncChecksum = riderRosterChecksum\(\)/);
+    assert.match(firmware, /while \(!pendingRiderSyncValidated/);
+    assert.match(firmware, /doc\["validated"\] = pendingRiderSyncValidated/);
+    assert.match(firmware, /sendJson\(pendingRiderSyncValidated \? 200 : 504, payload\)/);
+  });
+
   it("links only to API documentation routes served by firmware", () => {
     const html = readUiFile("index.html");
     const firmware = readFileSync(join(root, "firmware/gate/src/main.cpp"), "utf8");

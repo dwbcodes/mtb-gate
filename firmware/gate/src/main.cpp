@@ -80,6 +80,7 @@ enum class EspNowMsgType : uint8_t {
   SyncConfirm = 5,   // Start→finish: corrected offset
   RiderSync = 6,     // Start→broadcast: rider entry (chunked)
   Calibrate = 7,     // Start→peer: trigger remote calibration
+  RiderSyncAck = 8,  // Peer→start: confirms applied rider count + checksum
 };
 
 struct __attribute__((packed)) EspNowPayload {
@@ -97,10 +98,26 @@ struct __attribute__((packed)) RiderSyncMsg {
   char displayName[32];  // null-terminated
 };
 
+struct __attribute__((packed)) RiderSyncAckMsg {
+  EspNowMsgType type;          // RiderSyncAck
+  uint8_t totalCount;          // applied rider count
+  unsigned long checksum;      // checksum of applied wire-format rider roster
+};
+
 uint8_t peerMacBytes[6] = {0};
 bool espNowReady = false;
 unsigned long lastPingAt = 0;
 constexpr unsigned long PING_INTERVAL_MS = 10000;
+
+constexpr unsigned long RIDER_SYNC_ACK_TIMEOUT_MS = 1500;
+unsigned long pendingRiderSyncStartedAtMs = 0;
+uint8_t pendingRiderSyncTotal = 0;
+unsigned long pendingRiderSyncChecksum = 0;
+bool pendingRiderSyncValidated = false;
+String lastRiderSyncAckMac = "";
+uint8_t lastRiderSyncAckTotal = 0;
+unsigned long lastRiderSyncAckChecksum = 0;
+unsigned long lastRiderSyncAckAtMs = 0;
 
 // Clock sync state
 long clockOffsetMs = 0;        // finish gate: add to local millis() to get start-gate time
@@ -466,6 +483,46 @@ void sendPing() {
   sendEspNowMsg(EspNowMsgType::Ping, BROADCAST_MAC, millis(), (unsigned long)config.wifiChannel);
 }
 
+void checksumAppend(unsigned long& hash, const char* value, size_t maxLen) {
+  for (size_t i = 0; i < maxLen && value[i] != '\0'; i++) {
+    hash ^= (uint8_t)value[i];
+    hash *= 16777619UL;
+  }
+  hash ^= 0xff;
+  hash *= 16777619UL;
+}
+
+unsigned long riderRosterChecksum() {
+  unsigned long hash = 2166136261UL;
+  uint8_t total = (uint8_t)riderStore.count();
+  hash ^= total;
+  hash *= 16777619UL;
+
+  for (uint8_t i = 0; i < total; i++) {
+    RiderEntry* entry = riderStore.at(i);
+    if (!entry) continue;
+
+    char tagId[24] = {};
+    char displayName[32] = {};
+    strncpy(tagId, entry->tagId.c_str(), sizeof(tagId) - 1);
+    strncpy(displayName, entry->displayName.c_str(), sizeof(displayName) - 1);
+
+    hash ^= i;
+    hash *= 16777619UL;
+    checksumAppend(hash, tagId, sizeof(tagId));
+    checksumAppend(hash, displayName, sizeof(displayName));
+  }
+  return hash;
+}
+
+void sendRiderSyncAck(const uint8_t* destMac) {
+  RiderSyncAckMsg ack = {};
+  ack.type = EspNowMsgType::RiderSyncAck;
+  ack.totalCount = (uint8_t)riderStore.count();
+  ack.checksum = riderRosterChecksum();
+  esp_now_send(destMac, (uint8_t*)&ack, sizeof(ack));
+}
+
 void broadcastRiders() {
   if (config.role != GateRole::Start) return;
   uint8_t total = (uint8_t)riderStore.count();
@@ -567,6 +624,7 @@ void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
     if (msg->totalCount == 0) {
       riderStore.clearAll();
       eventStore.exportRiders(riderStore);
+      sendRiderSyncAck(mac);
       GateLog::info("RIDERS", "Cleared all riders (synced from start)");
       return;
     }
@@ -584,8 +642,31 @@ void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
 
     if (msg->index == msg->totalCount - 1) {
       eventStore.exportRiders(riderStore);
+      sendRiderSyncAck(mac);
       GateLog::info("RIDERS", "Synced " + String(msg->totalCount) + " riders from start gate");
     }
+    return;
+  }
+
+  if (msgType == EspNowMsgType::RiderSyncAck && len >= (int)sizeof(RiderSyncAckMsg)) {
+    if (config.gateNumber != 1) return;  // only start gate tracks peer rider sync validation
+    const RiderSyncAckMsg* ack = (const RiderSyncAckMsg*)data;
+
+    char macStr[18];
+    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+    lastRiderSyncAckMac = String(macStr);
+    lastRiderSyncAckTotal = ack->totalCount;
+    lastRiderSyncAckChecksum = ack->checksum;
+    lastRiderSyncAckAtMs = millis();
+    pendingRiderSyncValidated = pendingRiderSyncStartedAtMs > 0
+      && ack->totalCount == pendingRiderSyncTotal
+      && ack->checksum == pendingRiderSyncChecksum;
+
+    GateLog::info("RIDERS", "Peer " + lastRiderSyncAckMac + " ack count=" + String(ack->totalCount)
+      + " checksum=" + String(ack->checksum)
+      + (pendingRiderSyncValidated ? " validated" : " mismatch"));
     return;
   }
 
@@ -1361,8 +1442,42 @@ void handlePostPeerRidersSync() {
     return;
   }
   if (!requireStartGateForPeerCommand() || !requireEspNowForPeerCommand()) return;
+
+  pendingRiderSyncTotal = (uint8_t)riderStore.count();
+  pendingRiderSyncChecksum = riderRosterChecksum();
+  pendingRiderSyncValidated = false;
+  pendingRiderSyncStartedAtMs = millis();
+  lastRiderSyncAckMac = "";
+  lastRiderSyncAckTotal = 0;
+  lastRiderSyncAckChecksum = 0;
+  lastRiderSyncAckAtMs = 0;
+
   broadcastRiders();
-  sendPeerCommandOk("ESP-NOW rider roster sync broadcast");
+
+  while (!pendingRiderSyncValidated && millis() - pendingRiderSyncStartedAtMs < RIDER_SYNC_ACK_TIMEOUT_MS) {
+    delay(10);
+    yield();
+  }
+
+  JsonDocument doc;
+  doc["ok"] = pendingRiderSyncValidated;
+  doc["sent"] = true;
+  doc["validated"] = pendingRiderSyncValidated;
+  doc["expectedCount"] = pendingRiderSyncTotal;
+  doc["expectedChecksum"] = pendingRiderSyncChecksum;
+  doc["ackPeerMac"] = lastRiderSyncAckMac;
+  doc["ackCount"] = lastRiderSyncAckTotal;
+  doc["ackChecksum"] = lastRiderSyncAckChecksum;
+  doc["ackAgeMs"] = lastRiderSyncAckAtMs > 0 ? (long)(millis() - lastRiderSyncAckAtMs) : -1;
+  doc["timeoutMs"] = RIDER_SYNC_ACK_TIMEOUT_MS;
+  doc["message"] = pendingRiderSyncValidated
+    ? "ESP-NOW rider roster sync validated by peer"
+    : "ESP-NOW rider roster sync was sent but no matching peer validation was received";
+  if (config.peerMac.length() > 0) doc["peerMac"] = config.peerMac;
+
+  String payload;
+  serializeJson(doc, payload);
+  sendJson(pendingRiderSyncValidated ? 200 : 504, payload);
 }
 
 void handleNfcStartListen() {
