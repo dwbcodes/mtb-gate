@@ -1681,6 +1681,7 @@ void handleGetResults() {
     obj["riderName"] = run->riderName;
     obj["status"] = runStatusName(run->status);
     obj["live"] = true;
+    obj["queuedAtMs"] = run->queuedAtMs;
     if (run->goAtMs > 0 && run->startTriggeredAtMs > 0)
       obj["reactionMs"] = (long)run->startTriggeredAtMs - (long)run->goAtMs;
     if (run->startTriggeredAtMs > 0 && run->line2TriggeredAtMs > 0)
@@ -1789,9 +1790,21 @@ void handleDeleteResults() {
     sendJsonError(400, "Invalid JSON");
     return;
   }
+  if (body["all"] | false) {
+    // Clear all live runs
+    activeRunId = "";
+    falseStartDetected = false;
+    falseStartTriggeredAtMs = 0;
+    buzzerOff();
+    unfreezeBaseline();
+    queue.clear();
+    eventStore.clearAllRuns();
+    sendJson(200, R"({"ok":true,"cleared":"all"})");
+    return;
+  }
   String runId = body["runId"] | "";
   if (runId.length() == 0) {
-    sendJsonError(400, "runId required");
+    sendJsonError(400, "runId or all:true required");
     return;
   }
   // Check live queue first

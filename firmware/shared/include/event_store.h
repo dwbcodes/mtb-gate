@@ -33,6 +33,7 @@ public:
 
   // Run management
   bool deleteRun(const String& runId);
+  void clearAllRuns();
 
   // Storage management
   void pruneOldSessions(size_t keepCount = 5);

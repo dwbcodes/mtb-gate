@@ -68,6 +68,10 @@ bool RunQueue::remove(const String& runId) {
   return false;
 }
 
+void RunQueue::clear() {
+  count_ = 0;
+}
+
 void RunQueue::removeTerminal() {
   size_t write = 0;
   for (size_t read = 0; read < count_; read++) {

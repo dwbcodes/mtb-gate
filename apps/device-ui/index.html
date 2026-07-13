@@ -59,7 +59,10 @@
           <section class="card">
             <div class="section-head">
               <h2>Recent Attempts</h2>
-              <button id="refreshResults" class="btn-secondary">Refresh</button>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <span id="resultsAutoRefreshLabel" style="font-size:0.8em;color:var(--muted);">Auto-refreshing</span>
+                <button id="deleteAllResultsBtn" class="btn-danger btn-small" data-start-only>Delete All</button>
+              </div>
             </div>
             <p style="color: var(--muted); font-size: 0.85em; margin-bottom: 12px;">
               <strong>Gate Time</strong> = GO signal to crossing the start line.

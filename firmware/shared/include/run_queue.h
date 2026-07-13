@@ -19,6 +19,7 @@ public:
   bool stampLine2(const String& runId, unsigned long ms);
   bool remove(const String& runId);  // Remove a specific run by ID
   void removeTerminal();  // Remove Finished/TimedOut/Cancelled runs
+  void clear();           // Remove all runs
   RunRecord* find(const String& runId);
   RunRecord* at(size_t index);
   size_t size() const;

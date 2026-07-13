@@ -169,6 +169,7 @@ void EventStore::logRunSummary(const RunRecord& run, bool hadFalseStart) {
     doc["courseMs"] = (long)(run.finishTriggeredAtMs - run.startTriggeredAtMs);
 
   doc["falseStart"] = hadFalseStart;
+  doc["queuedAtMs"] = run.queuedAtMs;
   doc["completedAtMs"] = run.finishTriggeredAtMs;
 
   String line;
@@ -456,6 +457,22 @@ void EventStore::pruneOldSessions(size_t keepCount) {
     LittleFS.rmdir(dir);
     GateLog::info("EVENTS", "Pruned session " + String(sessions[i]));
   }
+}
+
+void EventStore::clearAllRuns() {
+  if (!mounted_) return;
+  File eventsDir = LittleFS.open("/events");
+  if (!eventsDir || !eventsDir.isDirectory()) return;
+  File entry = eventsDir.openNextFile();
+  while (entry) {
+    if (entry.isDirectory()) {
+      String path = String("/events/") + entry.name() + "/runs.jsonl";
+      File f = LittleFS.open(path, "w");
+      if (f) f.close();
+    }
+    entry = eventsDir.openNextFile();
+  }
+  GateLog::info("EVENTS", "Cleared all runs");
 }
 
 bool EventStore::deleteRun(const String& runId) {

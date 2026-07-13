@@ -8,6 +8,8 @@
 const PAGES = ['results', 'riders', 'files', 'config-network', 'config-gate', 'config-reset', 'docs', 'peer-tools'];
 let currentRole = null;
 let currentFilePath = '/';
+// Wall-clock epoch of the device's boot: Date.now() - status.uptimeMs
+let deviceBootEpochMs = null;
 
 async function apiJson(path, options = {}) {
   const response = await fetch(path, options);
@@ -97,6 +99,8 @@ document.querySelectorAll('.nav-link, .brand').forEach(link => {
 async function loadStatus() {
   try {
     const status = await apiJson('/api/status');
+    // Anchor device uptime to wall-clock time so run timestamps can be displayed
+    if (status.uptimeMs != null) deviceBootEpochMs = Date.now() - status.uptimeMs;
     applyRoleUi(status.role);
 
     document.getElementById('deviceLabel').textContent = status.deviceLabel || 'Gate Control';
@@ -142,13 +146,11 @@ async function loadStatus() {
       document.getElementById('connectedStartMac').textContent = espNow.peerMac || 'Not yet discovered';
     }
 
-    // Fetch merged results (live queue + persisted)
-    let results = [];
+    // Fetch merged results (live queue + persisted); keep existing display on failure
     try {
-      results = await apiJson('/api/results?limit=20');
-    } catch (_) { /* ignore if not available */ }
-
-    renderResults(results);
+      const results = await apiJson('/api/results?limit=20');
+      renderResults(results);
+    } catch (_) { /* ignore — keep existing content on transient errors */ }
   } catch (err) {
     console.error('Failed to load status:', err);
   }
@@ -168,15 +170,27 @@ function renderResults(results) {
 
   for (const run of results) {
     const name = run.riderName || run.riderId || '—';
+    const swipeTime = formatSwipeTime(run.queuedAtMs);
+    const displayName = swipeTime ? `${name} - ${swipeTime}` : name;
     const status = run.status || (run.falseStart ? 'False Start' : 'Finished');
     const reactionMs = run.reactionMs ?? (run.metrics?.reactionMs ?? null);
     const courseMs = run.courseMs ?? (run.metrics?.courseMs ?? null);
     const falseStart = run.falseStart || false;
 
     container.appendChild(renderAttemptCard(
-      name, status, reactionMs, courseMs, falseStart, run.runId, run.live
+      displayName, status, reactionMs, courseMs, falseStart, run.runId, run.live
     ));
   }
+}
+
+function formatSwipeTime(queuedAtMs) {
+  if (queuedAtMs == null || deviceBootEpochMs == null) return null;
+  const wallMs = deviceBootEpochMs + queuedAtMs;
+  const d = new Date(wallMs);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
 }
 
 function renderAttemptCard(name, status, reactionMs, courseMs, falseStart, runId, live) {
@@ -303,6 +317,22 @@ async function deleteRun(runId) {
     alert('Error: ' + err.message);
   }
 }
+
+async function deleteAllResults() {
+  if (!confirm('Delete ALL results? This cannot be undone.')) return;
+  try {
+    await apiJson('/api/results', jsonOptions('DELETE', { all: true }));
+    loadStatus();
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
+}
+
+// AUTO-REFRESH: poll results every 2s when on the results page
+setInterval(() => {
+  const page = window.location.hash.slice(1) || 'results';
+  if (page === 'results' || page === '') loadStatus();
+}, 2000);
 
 // RIDERS PAGE
 async function loadRiders() {
@@ -954,7 +984,7 @@ async function sendPeerCommand(endpoint, button) {
 // EVENT LISTENERS
 document.getElementById('tapNfc').addEventListener('click', startNfcListen);
 document.getElementById('refreshRiders').addEventListener('click', loadRiders);
-document.getElementById('refreshResults').addEventListener('click', loadStatus);
+document.getElementById('deleteAllResultsBtn').addEventListener('click', deleteAllResults);
 document.getElementById('refreshFiles').addEventListener('click', () => loadFiles(currentFilePath));
 document.getElementById('browseFilePath').addEventListener('click', () => loadFiles(document.getElementById('filePath').value));
 document.getElementById('filePath').addEventListener('keydown', (event) => {
