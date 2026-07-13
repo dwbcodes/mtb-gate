@@ -153,20 +153,32 @@ void EventStore::logEvent(const String& type, const String& runId,
   appendJsonl(sessionDir_ + "/events.jsonl", line);
 }
 
-void EventStore::logRunSummary(const RunRecord& run, bool hadFalseStart) {
+void EventStore::logRunSummary(const RunRecord& run, bool hadFalseStart,
+                               const String& officialTrigger) {
   if (!mounted_) return;
+
+  // Official start timestamp respects the configured trigger wheel
+  unsigned long officialStartMs = run.startTriggeredAtMs;
+  if (officialTrigger == "second" && run.line2TriggeredAtMs > 0)
+    officialStartMs = run.line2TriggeredAtMs;
 
   JsonDocument doc;
   doc["runId"] = run.runId;
   doc["riderId"] = run.riderId;
   doc["riderName"] = run.riderName;
 
-  if (run.goAtMs > 0 && run.startTriggeredAtMs > 0)
-    doc["reactionMs"] = (long)run.startTriggeredAtMs - (long)run.goAtMs;
+  if (run.goAtMs > 0 && officialStartMs > 0)
+    doc["reactionMs"] = (long)officialStartMs - (long)run.goAtMs;
   if (run.startTriggeredAtMs > 0 && run.line2TriggeredAtMs > 0)
     doc["launchMs"] = (long)(run.line2TriggeredAtMs - run.startTriggeredAtMs);
-  if (run.startTriggeredAtMs > 0 && run.finishTriggeredAtMs > 0)
-    doc["courseMs"] = (long)(run.finishTriggeredAtMs - run.startTriggeredAtMs);
+  if (officialStartMs > 0 && run.finishTriggeredAtMs > 0)
+    doc["courseMs"] = (long)(run.finishTriggeredAtMs - officialStartMs);
+
+  // Dual-trigger crossing times (non-null only when both wheels detected)
+  if (run.line2TriggeredAtMs > 0 && run.startTriggeredAtMs > 0)
+    doc["startCrossingMs"] = (long)(run.line2TriggeredAtMs - run.startTriggeredAtMs);
+  if (run.finishWheel2TriggeredAtMs > 0 && run.finishTriggeredAtMs > 0)
+    doc["finishCrossingMs"] = (long)(run.finishWheel2TriggeredAtMs - run.finishTriggeredAtMs);
 
   doc["falseStart"] = hadFalseStart;
   doc["queuedAtMs"] = run.queuedAtMs;

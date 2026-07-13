@@ -103,6 +103,7 @@ enum class EspNowMsgType : uint8_t {
   Calibrate = 7,     // Start→peer: trigger remote calibration
   RiderSyncAck = 8,  // Peer→start: confirms applied rider count + checksum
   ClockSyncAck = 9,  // Peer→start: confirms applied clock offset
+  FinishWheel2 = 10, // Finish→start: second (rear) wheel detected at finish sensor
 };
 
 struct __attribute__((packed)) EspNowPayload {
@@ -211,6 +212,11 @@ String activeRunId = "";
 int lastAnnouncedSecond = -1;
 bool falseStartDetected = false;
 unsigned long falseStartTriggeredAtMs = 0;
+
+// Dual-trigger / wheel-track state (shared between start gate and finish gate logic)
+bool finishWheel2Pending = false;         // finish gate: waiting to detect second wheel
+unsigned long finishWheel2DeadlineMs = 0; // deadline: finish-gate (send) and start-gate (await recv)
+unsigned long finishFirstTriggerMs = 0;   // finish gate: timestamp of first trigger (crossing time log)
 
 // ESP-NOW send-callback signaling (volatile: written in WiFi task, read in main task)
 volatile bool espNowSendDone     = false;
@@ -652,8 +658,8 @@ void sendEspNowFinishTrigger() {
 
 // sendRemoteCalibrate() removed — calibration is now non-blocking via CalibrationContext state machine
 
-// Called on start gate when finish gate reports trigger
-// finishMs = start gate's millis() at time of ESP-Now receipt
+// Called on start gate when finish gate reports first-wheel trigger.
+// finishCorrectedMs = start gate's millis() at time of ESP-Now receipt.
 void onFinishReceived(unsigned long finishCorrectedMs) {
   for (size_t i = 0; i < queue.size(); i++) {
     RunRecord* run = queue.at(i);
@@ -669,15 +675,42 @@ void onFinishReceived(unsigned long finishCorrectedMs) {
       GateLog::info("FINISH", "  Total:             " + String(totalMs / 1000.0F, 3) + "s" + (falseStartDetected ? " (includes 5.00s penalty)" : ""));
       GateLog::info("FINISH", "-----------------");
       eventStore.logEvent("finish_triggered", run->runId, run->riderId, finishCorrectedMs);
+      if (config.dualTriggerEnabled) {
+        // Defer run summary until rear wheel arrives or timeout
+        run->status = RunStatus::FinishedAwaitingWheel2;
+        finishWheel2DeadlineMs = finishCorrectedMs + config.wheelTrackTimeoutMs;
+        GateLog::info("WHEEL", "Awaiting finish rear wheel (timeout " +
+          String(config.wheelTrackTimeoutMs) + "ms)");
+      } else {
+        run->status = RunStatus::Finished;
+        eventStore.logRunSummary(*run, falseStartDetected, config.officialTrigger);
+        eventStore.logEvent("run_completed", run->runId, run->riderId, finishCorrectedMs);
+        falseStartDetected = false;
+        falseStartTriggeredAtMs = 0;
+      }
+      return;
+    }
+  }
+  GateLog::info("FINISH", "Received finish trigger but no active run");
+}
+
+// Called on start gate when finish gate reports the second (rear) wheel.
+void onFinishWheel2Received(unsigned long correctedMs) {
+  for (size_t i = 0; i < queue.size(); i++) {
+    RunRecord* run = queue.at(i);
+    if (run && run->status == RunStatus::FinishedAwaitingWheel2) {
+      run->finishWheel2TriggeredAtMs = correctedMs;
+      unsigned long crossingMs = correctedMs - run->finishTriggeredAtMs;
+      GateLog::info("WHEEL", "Finish rear wheel: crossing=" + String(crossingMs / 1000.0F, 3) + "s");
       run->status = RunStatus::Finished;
-      eventStore.logRunSummary(*run, falseStartDetected);
-      eventStore.logEvent("run_completed", run->runId, run->riderId, finishCorrectedMs);
+      eventStore.logRunSummary(*run, falseStartDetected, config.officialTrigger);
+      eventStore.logEvent("run_completed", run->runId, run->riderId, correctedMs);
       falseStartDetected = false;
       falseStartTriggeredAtMs = 0;
       return;
     }
   }
-  GateLog::info("FINISH", "Received finish trigger but no active run");
+  GateLog::info("WHEEL", "Received finish wheel2 but no FinishedAwaitingWheel2 run");
 }
 
 void autoRegisterPeer(const uint8_t* mac, const char* macStr) {
@@ -862,6 +895,11 @@ void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
     // ESP-Now latency (~5-15ms) is acceptable measurement error.
     onFinishReceived(millis());
   }
+
+  if (payload->type == EspNowMsgType::FinishWheel2) {
+    GateLog::info("ESP-NOW", "Finish wheel2 from " + String(macStr));
+    onFinishWheel2Received(millis());
+  }
 }
 
 void initEspNow() {
@@ -980,14 +1018,15 @@ bool validPassword(const String& password) {
 
 static const char* runStatusName(RunStatus s) {
   switch (s) {
-    case RunStatus::Queued:        return "Queued";
-    case RunStatus::Countdown:     return "Countdown";
-    case RunStatus::AwaitingStart: return "AwaitingStart";
-    case RunStatus::OnCourse:      return "OnCourse";
-    case RunStatus::Finished:      return "Finished";
-    case RunStatus::TimedOut:      return "TimedOut";
-    case RunStatus::Cancelled:     return "Cancelled";
-    default:                       return "Unknown";
+    case RunStatus::Queued:                 return "Queued";
+    case RunStatus::Countdown:              return "Countdown";
+    case RunStatus::AwaitingStart:          return "AwaitingStart";
+    case RunStatus::OnCourse:               return "OnCourse";
+    case RunStatus::Finished:               return "Finished";
+    case RunStatus::TimedOut:               return "TimedOut";
+    case RunStatus::Cancelled:              return "Cancelled";
+    case RunStatus::FinishedAwaitingWheel2: return "FinishedAwaitingWheel2";
+    default:                                return "Unknown";
   }
 }
 
@@ -1059,6 +1098,9 @@ String configJson() {
   doc["triggerDelta"] = config.triggerDelta;
   doc["wifiChannel"] = config.wifiChannel;
   doc["peerMac"] = config.peerMac;
+  doc["dualTriggerEnabled"] = config.dualTriggerEnabled;
+  doc["wheelTrackTimeoutMs"] = config.wheelTrackTimeoutMs;
+  doc["officialTrigger"] = config.officialTrigger;
 
   String payload;
   serializeJson(doc, payload);
@@ -1162,6 +1204,36 @@ String updateTimeConfigFromJson(const String& body) {
   applySensorThresholds();
   triggerDelta = config.triggerDelta;
   return R"({"ok":true})";
+}
+
+String updateWheelTrackConfigFromJson(const String& body) {
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, body);
+  if (error) {
+    return R"({"error":"Invalid JSON"})";
+  }
+
+  GateConfig next = config;
+  if (doc["enabled"].is<bool>()) next.dualTriggerEnabled = doc["enabled"].as<bool>();
+  if (doc["timeoutMs"].is<int>()) next.wheelTrackTimeoutMs = doc["timeoutMs"].as<int>();
+  if (doc["officialTrigger"].is<String>()) next.officialTrigger = doc["officialTrigger"].as<String>();
+
+  if (next.wheelTrackTimeoutMs < 500 || next.wheelTrackTimeoutMs > 10000) {
+    return R"({"error":"timeoutMs must be 500-10000"})";
+  }
+  if (next.officialTrigger != "first" && next.officialTrigger != "second") {
+    return R"({"error":"officialTrigger must be \"first\" or \"second\""})";
+  }
+
+  config = configStore.save(next);
+  JsonDocument resp;
+  resp["ok"] = true;
+  resp["dualTriggerEnabled"] = config.dualTriggerEnabled;
+  resp["wheelTrackTimeoutMs"] = config.wheelTrackTimeoutMs;
+  resp["officialTrigger"] = config.officialTrigger;
+  String payload;
+  serializeJson(resp, payload);
+  return payload;
 }
 
 String updateWifiConfigFromJson(const String& body) {
@@ -1363,6 +1435,10 @@ void handlePutConfigWifi() {
 
 void handlePutConfigTime() {
   sendJsonOperation(HTTP_PUT, updateTimeConfigFromJson);
+}
+
+void handlePutConfigWheelTrack() {
+  sendJsonOperation(HTTP_PUT, updateWheelTrackConfigFromJson);
 }
 
 void handlePutConfigMac() {
@@ -1718,12 +1794,20 @@ void handleGetResults() {
     obj["status"] = runStatusName(run->status);
     obj["live"] = true;
     obj["queuedAtMs"] = run->queuedAtMs;
-    if (run->goAtMs > 0 && run->startTriggeredAtMs > 0)
-      obj["reactionMs"] = (long)run->startTriggeredAtMs - (long)run->goAtMs;
+    // Official start respects the configured trigger wheel
+    unsigned long officialStartMs = run->startTriggeredAtMs;
+    if (config.officialTrigger == "second" && run->line2TriggeredAtMs > 0)
+      officialStartMs = run->line2TriggeredAtMs;
+    if (run->goAtMs > 0 && officialStartMs > 0)
+      obj["reactionMs"] = (long)officialStartMs - (long)run->goAtMs;
     if (run->startTriggeredAtMs > 0 && run->line2TriggeredAtMs > 0)
       obj["launchMs"] = (long)(run->line2TriggeredAtMs - run->startTriggeredAtMs);
-    if (run->startTriggeredAtMs > 0 && run->finishTriggeredAtMs > 0)
-      obj["courseMs"] = (long)(run->finishTriggeredAtMs - run->startTriggeredAtMs);
+    if (officialStartMs > 0 && run->finishTriggeredAtMs > 0)
+      obj["courseMs"] = (long)(run->finishTriggeredAtMs - officialStartMs);
+    if (run->line2TriggeredAtMs > 0 && run->startTriggeredAtMs > 0)
+      obj["startCrossingMs"] = (long)(run->line2TriggeredAtMs - run->startTriggeredAtMs);
+    if (run->finishWheel2TriggeredAtMs > 0 && run->finishTriggeredAtMs > 0)
+      obj["finishCrossingMs"] = (long)(run->finishWheel2TriggeredAtMs - run->finishTriggeredAtMs);
   }
 
   // Persisted runs (newest first, already JSON objects from getRunsJson)
@@ -2034,6 +2118,7 @@ void configureWebServer() {
   server.on("/api/config/wifi", HTTP_PUT, handlePutConfigWifi);
   server.on("/api/config/time", HTTP_PUT, handlePutConfigTime);
   server.on("/api/config/mac", HTTP_PUT, handlePutConfigMac);
+  server.on("/api/config/wheeltrack", HTTP_PUT, handlePutConfigWheelTrack);
   server.on("/api/riders", HTTP_GET, handleGetRiders);
   server.on("/api/riders", HTTP_POST, handlePostRiders);
   server.on("/api/riders", HTTP_DELETE, handleDeleteRiders);
@@ -2241,6 +2326,7 @@ void startRunForRider(const String& tagId) {
   run.startTriggeredAtMs = 0;
   run.line2TriggeredAtMs = 0;
   run.finishTriggeredAtMs = 0;
+  run.finishWheel2TriggeredAtMs = 0;
 
   if (!queue.enqueue(run)) {
     GateLog::info("RUN", "Queue full");
@@ -2366,14 +2452,37 @@ void handleStartGateLoop(unsigned long now) {
       GateLog::info("RUN", "TRIGGERED v=" + String(tV, 2) + "V bl=" + String(tBl, 2) +
         "V delta=" + String(triggerDelta, 2) + "V - Reaction: " + String(reactionMs / 1000.0F, 3) + "s");
       GateLog::info("RUN", "On course - waiting for finish gate...");
-      unfreezeBaseline();
+      sensorAboveCount = 0;  // re-arm debounce for second wheel
+      if (!config.dualTriggerEnabled) {
+        unfreezeBaseline();  // existing single-trigger behaviour
+      }
+      // else: keep baseline frozen; OnCourse second-wheel check handles unfreeze
     }
     return;
   }
 
   // OnCourse → waiting for finish gate (handled by onFinishReceived callback)
-  // Timeout after 5 minutes to prevent stuck runs when finish gate loses state
+  // If dual-trigger enabled, also watch for second (rear) wheel at start sensor.
+  // Timeout after 5 minutes to prevent stuck runs when finish gate loses state.
   if (run->status == RunStatus::OnCourse) {
+    if (config.dualTriggerEnabled && run->line2TriggeredAtMs == 0 &&
+        run->startTriggeredAtMs > 0) {
+      unsigned long sinceFirst = now - run->startTriggeredAtMs;
+      if (sinceFirst <= config.wheelTrackTimeoutMs) {
+        if (sensorTriggered(SENSOR_LINE1_PIN)) {
+          run->line2TriggeredAtMs = now;
+          sensorAboveCount = 0;
+          unfreezeBaseline();
+          GateLog::info("WHEEL", "Start rear wheel: crossing=" +
+            String(sinceFirst / 1000.0F, 3) + "s");
+        }
+      } else if (baselineFrozen) {
+        unfreezeBaseline();  // timeout — wheel lift, continue single-trigger
+        GateLog::info("WHEEL", "Start wheel lift — no rear trigger after " +
+          String(config.wheelTrackTimeoutMs) + "ms");
+      }
+    }
+
     constexpr unsigned long ONCOURSE_TIMEOUT_MS = 5UL * 60UL * 1000UL;
     if (run->startTriggeredAtMs > 0 && (now - run->startTriggeredAtMs) > ONCOURSE_TIMEOUT_MS) {
       GateLog::info("RUN", "OnCourse timeout after 5 min - no finish received for " + run->runId);
@@ -2385,6 +2494,19 @@ void handleStartGateLoop(unsigned long now) {
       queue.removeTerminal();
     }
     return;
+  }
+
+  // FinishedAwaitingWheel2 → wait for rear-wheel ESP-Now from finish gate
+  if (run->status == RunStatus::FinishedAwaitingWheel2) {
+    if (now >= finishWheel2DeadlineMs) {
+      GateLog::info("WHEEL", "Finish wheel lift — no rear trigger received");
+      run->status = RunStatus::Finished;
+      eventStore.logRunSummary(*run, falseStartDetected, config.officialTrigger);
+      eventStore.logEvent("run_completed", run->runId, run->riderId, now);
+      falseStartDetected = false;
+      falseStartTriggeredAtMs = 0;
+    }
+    return;  // removeTerminal handled by the Finished block on next iteration
   }
 
   // Finished → clear active run and clean up queue
@@ -2412,6 +2534,25 @@ void handleFinishGateLoop() {
   if (cal.state != CalState::Idle && cal.state != CalState::Done) return;
 
   if (finishTriggered) {
+    // Dual-trigger: wait for the second (rear) wheel before entering cooldown
+    if (finishWheel2Pending) {
+      if (sensorTriggered(SENSOR_LINE1_PIN)) {
+        unsigned long crossingMs = millis() - finishFirstTriggerMs;
+        GateLog::info("WHEEL", "Finish rear wheel: crossing=" + String(crossingMs / 1000.0F, 3) + "s");
+        sendEspNowMsg(EspNowMsgType::FinishWheel2, peerMacBytes, millis(), 0, 2);
+        finishWheel2Pending = false;
+        sensorAboveCount = 0;
+        finishCooldownUntil = millis() + FINISH_COOLDOWN_MS;
+        freezeBaseline();
+      } else if (millis() >= finishWheel2DeadlineMs) {
+        GateLog::info("WHEEL", "Finish wheel lift — no rear trigger");
+        finishWheel2Pending = false;
+        finishCooldownUntil = millis() + FINISH_COOLDOWN_MS;
+        freezeBaseline();
+      }
+      return;
+    }
+
     if (millis() > finishCooldownUntil) {
       finishTriggered = false;
       sensorAboveCount = 0;
@@ -2427,9 +2568,16 @@ void handleFinishGateLoop() {
     sendEspNowFinishTrigger();
     eventStore.logEvent("finish_sensor", "", "", millis(), clockOffsetMs);
     finishTriggered = true;
-    finishCooldownUntil = millis() + FINISH_COOLDOWN_MS;
+    finishFirstTriggerMs = millis();
     sensorAboveCount = 0;
-    freezeBaseline();
+    if (config.dualTriggerEnabled) {
+      finishWheel2Pending = true;
+      finishWheel2DeadlineMs = finishFirstTriggerMs + config.wheelTrackTimeoutMs;
+      // Don't freeze baseline or enter cooldown yet — wait for rear wheel
+    } else {
+      finishCooldownUntil = finishFirstTriggerMs + FINISH_COOLDOWN_MS;
+      freezeBaseline();
+    }
   }
 }
 

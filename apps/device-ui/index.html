@@ -238,6 +238,31 @@
             <p id="peerMessage" style="font-size: 0.85em; margin-top: 8px; color: var(--accent);"></p>
           </section>
 
+          <section class="card">
+            <h2>Wheel Track</h2>
+            <p style="color:var(--muted);font-size:0.85em;margin-bottom:12px;">
+              Detects both wheels crossing the sensor. Measures crossing time
+              and flags wheel lifts when no second trigger arrives within the timeout.
+            </p>
+            <label class="checkbox-label">
+              <input type="checkbox" id="dualTriggerEnabled">
+              <span>Enable dual-trigger detection</span>
+            </label>
+            <label>
+              <span>Second-wheel timeout (ms)</span>
+              <input type="number" id="wheelTrackTimeout" min="500" max="10000" step="100" value="3000">
+            </label>
+            <label>
+              <span>Official trigger</span>
+              <select id="officialTrigger">
+                <option value="first">First wheel (front)</option>
+                <option value="second">Second wheel (rear)</option>
+              </select>
+            </label>
+            <button class="btn-save" id="saveWheelTrackConfig">Save Wheel Track Settings</button>
+            <p id="wheelTrackMessage" style="font-size:0.85em;margin-top:8px;color:var(--accent);"></p>
+          </section>
+
         </div>
 
         <!-- RESET PAGE -->

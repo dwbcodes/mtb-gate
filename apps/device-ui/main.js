@@ -176,9 +176,12 @@ function renderResults(results) {
     const reactionMs = run.reactionMs ?? (run.metrics?.reactionMs ?? null);
     const courseMs = run.courseMs ?? (run.metrics?.courseMs ?? null);
     const falseStart = run.falseStart || false;
+    const startCrossingMs = run.startCrossingMs ?? null;
+    const finishCrossingMs = run.finishCrossingMs ?? null;
 
     container.appendChild(renderAttemptCard(
-      displayName, status, reactionMs, courseMs, falseStart, run.runId, run.live
+      displayName, status, reactionMs, courseMs, falseStart, run.runId, run.live,
+      startCrossingMs, finishCrossingMs
     ));
   }
 }
@@ -193,7 +196,8 @@ function formatSwipeTime(queuedAtMs) {
   return `${hh}:${mm}:${ss}`;
 }
 
-function renderAttemptCard(name, status, reactionMs, courseMs, falseStart, runId, live) {
+function renderAttemptCard(name, status, reactionMs, courseMs, falseStart, runId, live,
+                          startCrossingMs = null, finishCrossingMs = null) {
   const article = document.createElement('article');
   article.className = 'attempt';
 
@@ -251,6 +255,27 @@ function renderAttemptCard(name, status, reactionMs, courseMs, falseStart, runId
     cell.appendChild(span);
     cell.appendChild(strong);
     metricsDiv.appendChild(cell);
+  }
+
+  // Wheel track crossing times (shown only when present)
+  if (startCrossingMs != null || finishCrossingMs != null) {
+    const wheelDiv = document.createElement('div');
+    wheelDiv.className = 'metrics';
+    wheelDiv.style.cssText = 'margin-top:4px;font-size:0.85em;opacity:0.8;';
+    for (const [label, value] of [
+      ['Start crossing', startCrossingMs],
+      ['Finish crossing', finishCrossingMs]
+    ]) {
+      const cell = document.createElement('div');
+      const span = document.createElement('span');
+      span.textContent = label;
+      const strong = document.createElement('strong');
+      strong.textContent = value != null ? formatMs(value) : '—';
+      cell.appendChild(span);
+      cell.appendChild(strong);
+      wheelDiv.appendChild(cell);
+    }
+    article.appendChild(wheelDiv);
   }
 
   // Action buttons
@@ -606,6 +631,9 @@ async function loadNetworkConfig() {
     document.getElementById('wifiChannel').value = config.wifiChannel || 1;
     document.getElementById('peerMac').value = config.peerMac || '';
     document.getElementById('gateNumber').value = String(config.gateNumber ?? 1);
+    document.getElementById('dualTriggerEnabled').checked = config.dualTriggerEnabled || false;
+    document.getElementById('wheelTrackTimeout').value = config.wheelTrackTimeoutMs ?? 3000;
+    document.getElementById('officialTrigger').value = config.officialTrigger || 'first';
   } catch (err) {
     console.error('Failed to load config:', err);
   }
@@ -649,6 +677,15 @@ async function savePeerConfig() {
   };
 
   await saveJsonConfig('/api/config/mac', config, 'peerMessage', '✓ Saved!');
+}
+
+async function saveWheelTrackConfig() {
+  const payload = {
+    enabled: document.getElementById('dualTriggerEnabled').checked,
+    timeoutMs: parseInt(document.getElementById('wheelTrackTimeout').value, 10),
+    officialTrigger: document.getElementById('officialTrigger').value
+  };
+  await saveJsonConfig('/api/config/wheeltrack', payload, 'wheelTrackMessage', '✓ Saved!');
 }
 
 // RESET PAGE
@@ -993,6 +1030,7 @@ document.getElementById('filePath').addEventListener('keydown', (event) => {
 
 document.getElementById('saveWifiConfig').addEventListener('click', saveWifiConfig);
 document.getElementById('savePeerConfig').addEventListener('click', savePeerConfig);
+document.getElementById('saveWheelTrackConfig').addEventListener('click', saveWheelTrackConfig);
 
 document.getElementById('testStatus').addEventListener('click', () => testApiEndpoint('status'));
 document.getElementById('testRiders').addEventListener('click', () => testApiEndpoint('riders'));

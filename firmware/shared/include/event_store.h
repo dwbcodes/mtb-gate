@@ -21,7 +21,8 @@ public:
   void logEvent(const String& type, const String& runId = "",
                 const String& riderId = "", unsigned long localMs = 0,
                 long clockOffsetMs = 0);
-  void logRunSummary(const RunRecord& run, bool hadFalseStart);
+  void logRunSummary(const RunRecord& run, bool hadFalseStart,
+                     const String& officialTrigger = "first");
   void exportRiders(RiderStore& store);
 
   // API helpers — return JSON strings

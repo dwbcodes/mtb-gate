@@ -23,6 +23,9 @@ struct GateConfig {
   GateRole role;
   String peerMac;
   uint8_t gateNumber;
+  bool     dualTriggerEnabled;    // enable dual-trigger (front + rear wheel) detection
+  uint16_t wheelTrackTimeoutMs;   // window for second wheel before flagging wheel lift
+  String   officialTrigger;       // "first" or "second" — authoritative wheel for metrics
 };
 
 // Persists GateConfig to NVS ("mtb-gate" namespace) via Preferences.
@@ -48,7 +51,10 @@ private:
   static constexpr const char* kWifiChannelKey = "wifiCh";
   static constexpr const char* kRoleKey = "role";
   static constexpr const char* kPeerMacKey = "peerMac";
-  static constexpr const char* kGateNumberKey = "gateNum";
+  static constexpr const char* kGateNumberKey    = "gateNum";
+  static constexpr const char* kDualTriggerKey   = "dualTrigger";
+  static constexpr const char* kWheelTimeoutKey  = "wheelTimeout";
+  static constexpr const char* kOfficialTrigKey  = "officialTrig";
 
   static String defaultDeviceLabel(uint8_t gateNumber);
 };

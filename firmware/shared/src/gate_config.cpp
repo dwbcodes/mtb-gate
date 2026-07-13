@@ -21,6 +21,9 @@ GateConfig GateConfigStore::load() {
   const float storedTriggerDelta = preferences.getFloat(kTriggerDeltaKey, 0.3F);
   const uint8_t storedWifiChannel = preferences.getUChar(kWifiChannelKey, 1);
   const String storedPeerMac = preferences.getString(kPeerMacKey, "");
+  const bool storedDualTrigger = preferences.getBool(kDualTriggerKey, false);
+  const uint16_t storedWheelTimeout = preferences.getUShort(kWheelTimeoutKey, 3000);
+  const String storedOfficialTrig = preferences.getString(kOfficialTrigKey, "first");
   preferences.end();
 
   // Role is derived from gate number — gate 1 = Start, gate 12 = Finish, else Intermediate
@@ -44,7 +47,10 @@ GateConfig GateConfigStore::load() {
     storedWifiChannel,
     derivedRole,
     storedPeerMac,
-    storedGateNumber
+    storedGateNumber,
+    storedDualTrigger,
+    storedWheelTimeout,
+    storedOfficialTrig
   };
 }
 
@@ -63,6 +69,9 @@ GateConfig GateConfigStore::save(const GateConfig& config) {
   preferences.putString(kRoleKey, gateRoleName(config.role));
   preferences.putString(kPeerMacKey, config.peerMac);
   preferences.putUChar(kGateNumberKey, config.gateNumber);
+  preferences.putBool(kDualTriggerKey, config.dualTriggerEnabled);
+  preferences.putUShort(kWheelTimeoutKey, config.wheelTrackTimeoutMs);
+  preferences.putString(kOfficialTrigKey, config.officialTrigger);
   preferences.end();
   return config;
 }
