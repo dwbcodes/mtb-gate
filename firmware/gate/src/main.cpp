@@ -221,6 +221,8 @@ bool sensorTriggered(int pin) {
 
 // Forward declaration for calibration
 void sendEspNowMsg(EspNowMsgType type, const uint8_t* destMac, unsigned long ts1, unsigned long ts2);
+void startWifi();
+void initEspNow();
 
 // target: "all" = peer then local (default), "local" = this gate only, "peer" = peer only
 void startCalibration(bool fromStartGate, const String& target = "all") {
@@ -449,13 +451,20 @@ void sendEspNowMsg(EspNowMsgType type, const uint8_t* destMac, unsigned long ts1
   payload.type = type;
   payload.timestampMs = ts1 ? ts1 : millis();
   payload.timestampMs2 = ts2;
-  esp_now_send(destMac, (uint8_t*)&payload, sizeof(payload));
+  esp_err_t result = esp_now_send(destMac, (uint8_t*)&payload, sizeof(payload));
+  if (result != ESP_OK) {
+    char macStr[18];
+    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+      destMac[0], destMac[1], destMac[2], destMac[3], destMac[4], destMac[5]);
+    GateLog::info("ESP-NOW", "Send FAILED to " + String(macStr) + " err=" + String(result));
+  }
 }
 
 static const uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 void sendPing() {
-  sendEspNowMsg(EspNowMsgType::Ping, BROADCAST_MAC);
+  // Include Wi-Fi channel in timestampMs2 so non-start gates can auto-adopt
+  sendEspNowMsg(EspNowMsgType::Ping, BROADCAST_MAC, millis(), (unsigned long)config.wifiChannel);
 }
 
 void broadcastRiders() {
@@ -592,16 +601,34 @@ void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
   if (config.gateNumber != 1) {
     if (payload->type == EspNowMsgType::Ping) {
       String senderMac = String(macStr);
+      bool configChanged = false;
+
+      // Auto-discover start gate MAC
       if (config.peerMac != senderMac) {
         GateLog::info("ESP-NOW", "Auto-discovered start gate: " + senderMac + " (was: " + config.peerMac + ")");
         config.peerMac = senderMac;
         memcpy(peerMacBytes, mac, 6);
         registerEspNowPeer(peerMacBytes);
         espNowReady = true;
-        config = configStore.save(config);
-        GateLog::info("ESP-NOW", "Peer updated to: " + senderMac);
+        configChanged = true;
       }
-      // Always respond to pings so start gate knows we're alive
+
+      // Auto-adopt Wi-Fi channel from start gate (carried in timestampMs2)
+      int startChannel = (int)payload->timestampMs2;
+      if (startChannel >= 1 && startChannel <= 13 && startChannel != config.wifiChannel) {
+        GateLog::info("ESP-NOW", "Adopting start gate channel " + String(startChannel) + " (was: " + String(config.wifiChannel) + ")");
+        config.wifiChannel = startChannel;
+        configChanged = true;
+        // Restart Wi-Fi on new channel
+        config = configStore.save(config);
+        startWifi();
+        initEspNow();
+        return;
+      }
+
+      if (configChanged) {
+        config = configStore.save(config);
+      }
       return;
     }
 
@@ -660,6 +687,14 @@ void initEspNow() {
     return;
   }
   esp_now_register_recv_cb(onEspNowRecv);
+  esp_now_register_send_cb([](const uint8_t* mac, esp_now_send_status_t status) {
+    if (status != ESP_NOW_SEND_SUCCESS) {
+      char macStr[18];
+      snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+      GateLog::info("ESP-NOW", "Delivery FAILED to " + String(macStr));
+    }
+  });
 
   // Register broadcast peer on all gates so they can receive broadcasts
   registerEspNowPeer(BROADCAST_MAC);
@@ -785,8 +820,13 @@ String statusJson() {
   doc["line2Threshold"] = config.line2Threshold;
   doc["triggerDelta"] = config.triggerDelta;
   JsonObject espNow = doc["espNow"].to<JsonObject>();
-  espNow["connected"] = config.peerMac.length() > 0;
+  espNow["configured"] = config.peerMac.length() > 0;
   espNow["peerMac"] = config.peerMac;
+  espNow["lastRttMs"] = lastRttMs;
+  long syncAgo = lastSyncAtMs > 0 ? (long)(millis() - lastSyncAtMs) : -1;
+  espNow["lastSyncAgoMs"] = syncAgo;
+  espNow["reachable"] = syncAgo >= 0 && syncAgo < 60000;
+  espNow["wifiChannel"] = config.wifiChannel;
 
   JsonArray queueArr = doc["queue"].to<JsonArray>();
   for (size_t i = 0; i < queue.size(); i++) {
@@ -1237,6 +1277,31 @@ void handlePostPeerPing() {
   sendPeerCommandOk("ESP-NOW discovery ping broadcast");
 }
 
+void handlePostPeerTest() {
+  if (!requireEspNowForPeerCommand()) return;
+  // Send sync request and return current connectivity state
+  if (espNowReady) {
+    sendSyncRequest();
+  }
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["peerMac"] = config.peerMac;
+  doc["espNowReady"] = espNowReady;
+  doc["wifiChannel"] = config.wifiChannel;
+  doc["lastRttMs"] = lastRttMs;
+  long syncAgo = lastSyncAtMs > 0 ? (long)(millis() - lastSyncAtMs) : -1;
+  doc["lastSyncAgoMs"] = syncAgo;
+  doc["reachable"] = syncAgo >= 0 && syncAgo < 60000;
+  doc["clockSynced"] = clockSynced;
+  doc["clockOffsetMs"] = clockOffsetMs;
+  doc["message"] = (syncAgo >= 0 && syncAgo < 60000)
+    ? "Peer reachable (RTT " + String(lastRttMs) + "ms)"
+    : "Peer NOT reachable - check channel and distance";
+  String out;
+  serializeJson(doc, out);
+  sendJson(200, out);
+}
+
 void handlePostPeerSync() {
   if (server.method() != HTTP_POST) {
     sendJsonError(405, "Method not allowed");
@@ -1305,7 +1370,7 @@ void sendPingOnAllChannels() {
     peerInfo.encrypt = false;
     esp_now_add_peer(&peerInfo);
 
-    sendEspNowMsg(EspNowMsgType::Ping, peerMacBytes, 0, 0);
+    sendEspNowMsg(EspNowMsgType::Ping, peerMacBytes, millis(), (unsigned long)config.wifiChannel);
     delay(20);
 
     esp_now_del_peer(peerMacBytes);
@@ -1771,6 +1836,7 @@ void configureWebServer() {
   server.on("/api/riders", HTTP_DELETE, handleDeleteRiders);
   server.on("/api/ping", HTTP_POST, handlePostPing);
   server.on("/api/peer/ping", HTTP_POST, handlePostPeerPing);
+  server.on("/api/peer/test", HTTP_POST, handlePostPeerTest);
   server.on("/api/peer/sync", HTTP_POST, handlePostPeerSync);
   server.on("/api/peer/calibrate", HTTP_POST, handlePostPeerCalibrate);
   server.on("/api/peer/clock", HTTP_POST, handlePostPeerClock);
@@ -2372,7 +2438,7 @@ void loop() {
     sendPing();  // broadcast to FF:FF:FF:FF:FF:FF
     // Also send directed ping to known peer — works even if channels differ
     if (espNowReady) {
-      sendEspNowMsg(EspNowMsgType::Ping, peerMacBytes, 0, 0);
+      sendEspNowMsg(EspNowMsgType::Ping, peerMacBytes, millis(), (unsigned long)config.wifiChannel);
     }
     // Sync riders every 5th ping (~50s) so late-joining gates get the list
     static uint8_t pingCount = 0;

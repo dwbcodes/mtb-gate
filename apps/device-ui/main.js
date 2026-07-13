@@ -106,12 +106,20 @@ async function loadStatus() {
 
     const espNow = status.espNow || {};
     document.getElementById('statusPeerMac').textContent = espNow.peerMac || 'Not configured';
-    document.getElementById('statusConnected').textContent = espNow.connected ? '✓ Yes' : '✗ No';
-    document.getElementById('topConnection').textContent = espNow.connected ? 'Peer connected' : 'Peer not connected';
+    const reachable = espNow.reachable;
+    const configured = espNow.configured;
+    const connLabel = reachable ? '✓ Connected' : (configured ? '✗ Not reachable' : '— Not configured');
+    document.getElementById('statusConnected').textContent = connLabel;
+    const rttLabel = espNow.lastRttMs > 0 ? ` (RTT ${espNow.lastRttMs}ms, ch${espNow.wifiChannel})` : '';
+    document.getElementById('topConnection').textContent = reachable
+      ? 'Peer connected' + rttLabel
+      : (configured ? 'Peer NOT reachable' : 'No peer configured');
     const peerToolMac = document.getElementById('peerToolMac');
     const peerToolStatus = document.getElementById('peerToolStatus');
     if (peerToolMac) peerToolMac.textContent = espNow.peerMac || 'Not configured';
-    if (peerToolStatus) peerToolStatus.textContent = espNow.connected ? 'Connected' : 'Not connected';
+    if (peerToolStatus) peerToolStatus.textContent = reachable
+      ? 'Connected (RTT ' + espNow.lastRttMs + 'ms)'
+      : (configured ? 'Not reachable' : 'Not configured');
 
     // On non-start gates, the peer is the auto-discovered Start Gate.
     const gate1MacEl = document.getElementById('gate1Mac');
@@ -932,7 +940,9 @@ async function refreshPeerStatus() {
     const peerToolMac = document.getElementById('peerToolMac');
     const peerToolStatus = document.getElementById('peerToolStatus');
     if (peerToolMac) peerToolMac.textContent = espNow.peerMac || 'Not configured';
-    if (peerToolStatus) peerToolStatus.textContent = espNow.connected ? 'Connected' : 'Not connected';
+    if (peerToolStatus) peerToolStatus.textContent = espNow.reachable
+      ? 'Connected (RTT ' + espNow.lastRttMs + 'ms, ch' + espNow.wifiChannel + ')'
+      : (espNow.configured ? 'Not reachable' : 'Not configured');
   } catch (_) { /* ignore */ }
 
   try {
