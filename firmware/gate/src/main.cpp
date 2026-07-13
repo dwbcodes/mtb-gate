@@ -49,7 +49,6 @@ IPAddress staIp;
 bool pendingNetworkRestart = false;
 bool pendingReboot = false;
 bool pendingCalibration = false;
-bool pendingChannelScan = false;
 
 // Non-blocking calibration state machine
 enum class CalState : uint8_t { Idle, PeerSent, LocalIdle, LocalPress, Done };
@@ -1356,41 +1355,6 @@ void handleGetPeerClock() {
   sendJson(200, out);
 }
 
-void sendPingOnAllChannels() {
-  if (!espNowReady) return;
-  GateLog::info("ESP-NOW", "Scanning all channels for peer " + config.peerMac);
-
-  // Remove existing peer registration
-  esp_now_del_peer(peerMacBytes);
-
-  for (uint8_t ch = 1; ch <= 13; ch++) {
-    esp_now_peer_info_t peerInfo = {};
-    memcpy(peerInfo.peer_addr, peerMacBytes, 6);
-    peerInfo.channel = ch;
-    peerInfo.encrypt = false;
-    esp_now_add_peer(&peerInfo);
-
-    sendEspNowMsg(EspNowMsgType::Ping, peerMacBytes, millis(), (unsigned long)config.wifiChannel);
-    delay(20);
-
-    esp_now_del_peer(peerMacBytes);
-  }
-
-  // Re-register on channel 0 (current channel) for normal operation
-  registerEspNowPeer(peerMacBytes);
-  GateLog::info("ESP-NOW", "Channel scan complete, peer re-registered on current channel");
-}
-
-void handlePostPeerPush() {
-  if (server.method() != HTTP_POST) {
-    sendJsonError(405, "Method not allowed");
-    return;
-  }
-  if (!requireStartGateForPeerCommand() || !requireEspNowForPeerCommand()) return;
-  pendingChannelScan = true;
-  sendPeerCommandOk("Channel scan queued - pinging peer on all 13 channels");
-}
-
 void handlePostPeerRidersSync() {
   if (server.method() != HTTP_POST) {
     sendJsonError(405, "Method not allowed");
@@ -1841,7 +1805,7 @@ void configureWebServer() {
   server.on("/api/peer/calibrate", HTTP_POST, handlePostPeerCalibrate);
   server.on("/api/peer/clock", HTTP_POST, handlePostPeerClock);
   server.on("/api/peer/clock", HTTP_GET, handleGetPeerClock);
-  server.on("/api/peer/push", HTTP_POST, handlePostPeerPush);
+
   server.on("/api/peer/riders/sync", HTTP_POST, handlePostPeerRidersSync);
   server.on("/api/reboot", HTTP_POST, handlePostReboot);
   server.on("/api/calibrate", HTTP_POST, handlePostCalibrate);
@@ -2394,10 +2358,7 @@ void loop() {
     startCalibration(false);
   }
 
-  if (pendingChannelScan) {
-    pendingChannelScan = false;
-    sendPingOnAllChannels();
-  }
+
 
   updateCalibration();
 
