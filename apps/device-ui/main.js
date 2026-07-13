@@ -960,31 +960,6 @@ async function refreshPeerStatus() {
   } catch (_) { /* ignore */ }
 }
 
-async function checkPeerClock() {
-  const resultEl = document.getElementById('peerResult');
-  resultEl.style.display = 'block';
-  resultEl.textContent = 'Sending clock sync request...';
-
-  try {
-    const response = await fetch('/api/peer/clock', { method: 'POST' });
-    const data = await response.json().catch(() => ({}));
-    resultEl.textContent = 'HTTP ' + response.status + '\n\n' + JSON.stringify(data, null, 2);
-
-    // Wait 1s for the sync response to arrive, then refresh
-    setTimeout(async () => {
-      const clock = await apiJson('/api/peer/clock');
-      const rttEl = document.getElementById('peerRtt');
-      const offsetEl = document.getElementById('peerClockOffset');
-      if (rttEl) rttEl.textContent = clock.lastRttMs > 0 ? clock.lastRttMs + 'ms' : 'Not measured';
-      if (offsetEl) offsetEl.textContent = clock.peerClockSynced ? clock.peerClockOffset + 'ms' : 'Not synced';
-
-      resultEl.textContent += '\n\n--- Updated after sync ---\n' + JSON.stringify(clock, null, 2);
-    }, 1500);
-  } catch (err) {
-    resultEl.textContent = 'Error: ' + err.message;
-  }
-}
-
 async function sendPeerCommand(endpoint, button) {
   const resultEl = document.getElementById('peerResult');
 
@@ -1040,7 +1015,6 @@ document.getElementById('restoreConfigFile').addEventListener('change', (e) => {
 document.querySelectorAll('[data-peer-command]').forEach((button) => {
   button.addEventListener('click', () => sendPeerCommand(button.dataset.peerCommand, button));
 });
-document.getElementById('checkClockBtn').addEventListener('click', checkPeerClock);
 
 // Initialize
 const initialPage = window.location.hash.slice(1);

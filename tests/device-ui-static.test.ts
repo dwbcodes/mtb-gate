@@ -104,8 +104,12 @@ describe("device UI static contract", () => {
     assert.match(html, /data-peer-command="\/api\/peer\/sync"/);
     assert.match(html, /data-peer-command="\/api\/peer\/calibrate"/);
     assert.match(html, /data-peer-command="\/api\/peer\/riders\/sync"/);
+    assert.doesNotMatch(html, /Check Clock/);
+    assert.doesNotMatch(html, /id="checkClockBtn"/);
     assert.doesNotMatch(html, /id="peerUrl"/);
     assert.doesNotMatch(js, /fetch\(url,/);
+    assert.doesNotMatch(js, /function checkPeerClock/);
+    assert.doesNotMatch(js, /checkClockBtn/);
     assert.match(js, /fetch\(endpoint, \{ method: 'POST' \}\)/);
     assert.match(firmware, /server\.on\("\/api\/peer\/ping", HTTP_POST, handlePostPeerPing\)/);
     assert.match(firmware, /server\.on\("\/api\/peer\/sync", HTTP_POST, handlePostPeerSync\)/);
@@ -122,6 +126,19 @@ describe("device UI static contract", () => {
     assert.match(firmware, /while \(!pendingRiderSyncValidated/);
     assert.match(firmware, /doc\["validated"\] = pendingRiderSyncValidated/);
     assert.match(firmware, /sendJson\(pendingRiderSyncValidated \? 200 : 504, payload\)/);
+  });
+
+  it("makes peer clock sync check, update, and confirm tolerance", () => {
+    const firmware = readFileSync(join(root, "firmware/gate/src/main.cpp"), "utf8");
+
+    assert.match(firmware, /ClockSyncAck = 9/);
+    assert.match(firmware, /CLOCK_SYNC_ACCEPTABLE_DIFF_MS = 25/);
+    assert.match(firmware, /sendClockSyncAck\(mac, rttMs\)/);
+    assert.match(firmware, /while \(!pendingClockSyncConfirmed/);
+    assert.match(firmware, /doc\["initial"\]\.to<JsonObject>\(\)/);
+    assert.match(firmware, /doc\["update"\]\.to<JsonObject>\(\)/);
+    assert.match(firmware, /doc\["confirmation"\]\.to<JsonObject>\(\)/);
+    assert.match(firmware, /sendJson\(acceptable \? 200 : 504, payload\)/);
   });
 
   it("links only to API documentation routes served by firmware", () => {

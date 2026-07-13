@@ -81,6 +81,7 @@ enum class EspNowMsgType : uint8_t {
   RiderSync = 6,     // Start→broadcast: rider entry (chunked)
   Calibrate = 7,     // Start→peer: trigger remote calibration
   RiderSyncAck = 8,  // Peer→start: confirms applied rider count + checksum
+  ClockSyncAck = 9,  // Peer→start: confirms applied clock offset
 };
 
 struct __attribute__((packed)) EspNowPayload {
@@ -104,10 +105,19 @@ struct __attribute__((packed)) RiderSyncAckMsg {
   unsigned long checksum;      // checksum of applied wire-format rider roster
 };
 
+struct __attribute__((packed)) ClockSyncAckMsg {
+  EspNowMsgType type;             // ClockSyncAck
+  long appliedOffsetMs;           // peer offset applied after SyncConfirm
+  unsigned long peerCorrectedMs;  // peer millis() + appliedOffsetMs at send time
+  unsigned long rttMs;            // RTT measured by the start gate
+};
+
 uint8_t peerMacBytes[6] = {0};
 bool espNowReady = false;
 unsigned long lastPingAt = 0;
 constexpr unsigned long PING_INTERVAL_MS = 10000;
+constexpr unsigned long CLOCK_SYNC_ACK_TIMEOUT_MS = 1500;
+constexpr unsigned long CLOCK_SYNC_ACCEPTABLE_DIFF_MS = 25;
 
 constexpr unsigned long RIDER_SYNC_ACK_TIMEOUT_MS = 1500;
 unsigned long pendingRiderSyncStartedAtMs = 0;
@@ -125,6 +135,13 @@ bool clockSynced = false;
 unsigned long syncT1 = 0;      // start gate: T1 of pending sync request
 unsigned long lastRttMs = 0;   // start gate: last measured RTT
 unsigned long lastSyncAtMs = 0; // start gate: when last sync completed
+unsigned long pendingClockSyncStartedAtMs = 0;
+bool pendingClockSyncConfirmed = false;
+String lastClockSyncAckMac = "";
+long lastClockSyncAppliedOffsetMs = 0;
+long lastClockSyncDifferenceMs = 0;
+unsigned long lastClockSyncAckRttMs = 0;
+unsigned long lastClockSyncAckAtMs = 0;
 
 // Sensor pin and reading
 constexpr int SENSOR_LINE1_PIN = 4;
@@ -562,6 +579,15 @@ void sendSyncRequest() {
   GateLog::info("SYNC", "Request sent (T1=" + String(syncT1) + ")");
 }
 
+void sendClockSyncAck(const uint8_t* destMac, unsigned long rttMs) {
+  ClockSyncAckMsg ack = {};
+  ack.type = EspNowMsgType::ClockSyncAck;
+  ack.appliedOffsetMs = clockOffsetMs;
+  ack.peerCorrectedMs = (unsigned long)((long)millis() + clockOffsetMs);
+  ack.rttMs = rttMs;
+  esp_now_send(destMac, (uint8_t*)&ack, sizeof(ack));
+}
+
 void sendEspNowFinishTrigger() {
   if (!espNowReady) {
     GateLog::info("FINISH", "ESP-Now NOT ready - trigger lost! peerMac=" + config.peerMac);
@@ -670,6 +696,29 @@ void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
     return;
   }
 
+  if (msgType == EspNowMsgType::ClockSyncAck && len >= (int)sizeof(ClockSyncAckMsg)) {
+    if (config.gateNumber != 1) return;  // only start gate tracks peer clock validation
+    const ClockSyncAckMsg* ack = (const ClockSyncAckMsg*)data;
+
+    char macStr[18];
+    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+    lastClockSyncAckMac = String(macStr);
+    lastClockSyncAppliedOffsetMs = ack->appliedOffsetMs;
+    lastClockSyncDifferenceMs = (long)millis() - (long)ack->peerCorrectedMs;
+    lastClockSyncAckRttMs = ack->rttMs;
+    lastClockSyncAckAtMs = millis();
+    pendingClockSyncConfirmed = pendingClockSyncStartedAtMs > 0
+      && labs(lastClockSyncDifferenceMs) <= (long)CLOCK_SYNC_ACCEPTABLE_DIFF_MS;
+
+    GateLog::info("SYNC", "Peer " + lastClockSyncAckMac + " ack offset="
+      + String(lastClockSyncAppliedOffsetMs) + "ms diff=" + String(lastClockSyncDifferenceMs)
+      + "ms rtt=" + String(lastClockSyncAckRttMs) + "ms"
+      + (pendingClockSyncConfirmed ? " acceptable" : " outside tolerance"));
+    return;
+  }
+
   if (len < (int)sizeof(EspNowPayload)) return;
   const EspNowPayload* payload = (const EspNowPayload*)data;
 
@@ -725,6 +774,7 @@ void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
       unsigned long rttMs = payload->timestampMs2;
       clockOffsetMs = (long)payload->timestampMs + (long)(rttMs / 2) - (long)millis();
       clockSynced = true;
+      sendClockSyncAck(mac, rttMs);
       GateLog::info("SYNC", "Clock synced: offset=" + String(clockOffsetMs) + "ms RTT=" + String(rttMs) + "ms");
       return;
     }
@@ -1388,8 +1438,56 @@ void handlePostPeerSync() {
     return;
   }
   if (!requireStartGateForPeerCommand() || !requireEspNowForPeerCommand() || !requireConnectedPeerForPeerCommand()) return;
+
+  pendingClockSyncStartedAtMs = millis();
+  pendingClockSyncConfirmed = false;
+  lastClockSyncAckMac = "";
+  lastClockSyncAppliedOffsetMs = 0;
+  lastClockSyncDifferenceMs = 0;
+  lastClockSyncAckRttMs = 0;
+  lastClockSyncAckAtMs = 0;
+
   sendSyncRequest();
-  sendPeerCommandOk("ESP-NOW clock sync request sent");
+
+  while (!pendingClockSyncConfirmed && millis() - pendingClockSyncStartedAtMs < CLOCK_SYNC_ACK_TIMEOUT_MS) {
+    delay(10);
+    yield();
+  }
+
+  const bool acceptable = pendingClockSyncConfirmed
+    && labs(lastClockSyncDifferenceMs) <= (long)CLOCK_SYNC_ACCEPTABLE_DIFF_MS;
+  const bool initialCheckCompleted = lastSyncAtMs >= pendingClockSyncStartedAtMs;
+
+  JsonDocument doc;
+  doc["ok"] = acceptable;
+  doc["message"] = acceptable
+    ? "ESP-NOW clock sync confirmed within acceptable difference"
+    : "ESP-NOW clock sync was sent but peer confirmation was missing or outside tolerance";
+  doc["peerMac"] = config.peerMac;
+
+  JsonObject initial = doc["initial"].to<JsonObject>();
+  initial["checked"] = initialCheckCompleted;
+  initial["rttMs"] = initialCheckCompleted ? lastRttMs : 0;
+  initial["completedAgoMs"] = initialCheckCompleted ? (long)(millis() - lastSyncAtMs) : -1;
+
+  JsonObject update = doc["update"].to<JsonObject>();
+  update["sent"] = initialCheckCompleted;
+  update["requestStartedAtMs"] = pendingClockSyncStartedAtMs;
+
+  JsonObject confirmation = doc["confirmation"].to<JsonObject>();
+  confirmation["confirmed"] = pendingClockSyncConfirmed;
+  confirmation["acceptable"] = acceptable;
+  confirmation["acceptableDifferenceMs"] = CLOCK_SYNC_ACCEPTABLE_DIFF_MS;
+  confirmation["peerMac"] = lastClockSyncAckMac;
+  confirmation["appliedOffsetMs"] = lastClockSyncAppliedOffsetMs;
+  confirmation["differenceMs"] = lastClockSyncDifferenceMs;
+  confirmation["rttMs"] = lastClockSyncAckRttMs;
+  confirmation["ackAgeMs"] = lastClockSyncAckAtMs > 0 ? (long)(millis() - lastClockSyncAckAtMs) : -1;
+  confirmation["timeoutMs"] = CLOCK_SYNC_ACK_TIMEOUT_MS;
+
+  String payload;
+  serializeJson(doc, payload);
+  sendJson(acceptable ? 200 : 504, payload);
 }
 
 void handlePostPeerCalibrate() {
