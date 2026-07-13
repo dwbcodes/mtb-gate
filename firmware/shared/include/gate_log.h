@@ -2,12 +2,17 @@
 
 #include <Arduino.h>
 
+// On the ESP32-C3 with native USB CDC, "Serial" is the USB console;
+// otherwise fall back to UART0 so logs still appear on classic boards.
 #if defined(ARDUINO_USB_CDC_ON_BOOT) && (ARDUINO_USB_CDC_ON_BOOT == 1)
 #define GATE_SERIAL Serial
 #else
 #define GATE_SERIAL Serial0
 #endif
 
+// Serial logging prefixed with the device id ("[Gate-Start-…] [TAG] msg")
+// so multi-device test harnesses can attribute interleaved output. Also
+// the input side of the serial console API (available()/readLine()).
 class GateLog {
 public:
   static void begin(unsigned long baud) { GATE_SERIAL.begin(baud); }

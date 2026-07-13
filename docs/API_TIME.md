@@ -1,6 +1,6 @@
 # PUT /api/config/time
 
-Update the active sensor trigger calibration. Firmware detects a trigger when the analog reading rises above the rolling baseline by `triggerDelta` volts.
+Update the active sensor trigger calibration. Firmware detects a trigger when the analog reading deviates from the rolling baseline by more than `triggerDelta` volts **in either direction** (the pressure tube can push the MPXV7002DP output up or down depending on port wiring).
 
 ## Request
 
@@ -51,14 +51,16 @@ Legacy fields `startThreshold`, `line2Threshold`, and `finishThreshold` are stil
 
 ## Notes
 
-- **Trigger meaning**: a sensor is triggered when its analog reading is greater than `rolling baseline + triggerDelta`
+- **Trigger meaning**: a sensor is triggered when its reading deviates from the rolling baseline by more than `triggerDelta` (either direction), debounced over 3 consecutive samples
 - **Baseline**: rolling average of recent sensor readings, frozen during countdown and active trigger windows
-- **Calibration**: the device samples idle sensor noise on boot; adjust `triggerDelta` with this API when bench testing shows the default is too sensitive or not sensitive enough
+- **Calibration**: the device samples idle sensor noise on boot to seed `triggerDelta`; a guided calibration (idle sample + tube press) is available via the serial `calibrate` command. Adjust with this API when bench testing shows the value is too sensitive or not sensitive enough
 - **Typical values**: 0.05-0.30 V depending on sensor noise and tube response
 
 ## Serial Equivalent
 
-None.
+```
+> api config/time {"triggerDelta":0.25}
+```
 
 ## Examples
 

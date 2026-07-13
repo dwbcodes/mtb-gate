@@ -1,6 +1,6 @@
 # /api/riders
 
-Manage rider registration. Riders are stored locally on the start gate (32-entry limit) and identified by NFC tag ID. Each rider has a deterministic `riderId` derived from their tag ID.
+Manage rider registration. Riders are stored on-device in NVS (32-entry limit) and identified by NFC tag ID. Each rider has a deterministic `riderId` derived from their tag ID. Register riders on the **start gate**: every add/delete is broadcast to the other gates over ESP-Now, so the roster stays in sync automatically.
 
 ## GET /api/riders
 
@@ -46,7 +46,7 @@ None — read-only query.
 ### Serial Equivalent
 
 ```
-> riders
+> api riders
 [
   {"riderId":"rider-tag-001", "displayName":"Dave Wilson", "tagId":"tag-001"},
   {"riderId":"rider-tag-002", "displayName":"Sarah Chen", "tagId":"tag-002"}
@@ -96,8 +96,7 @@ Content-Type: application/json
 
 ```json
 {
-  "ok": true,
-  "riderId": "rider-tag-001"
+  "ok": true
 }
 ```
 
@@ -112,21 +111,20 @@ Content-Type: application/json
 ### Validation Rules
 
 - `tagId`: Required; any value (e.g., NFC UID, barcode, etc.)
-- `displayName`: Required; must be non-empty
+- `displayName`: Required
 - Storage limit: 32 riders max
 
 ### Side Effects
 
-1. Rider entry saved to NVS
-2. If tag ID already exists, display name is overwritten (upsert behavior)
-3. If roster is full (32 riders), adding a new tag returns 400 error
-4. No device restart required
+1. Rider entry saved to NVS (upsert by `tagId`)
+2. Roster broadcast to peer gates over ESP-Now
+3. Roster exported to `/riders.json` on the device filesystem
+4. If the roster is already full (32 riders), a new tag is silently ignored (the response is still `{"ok":true}`)
 
 ### Serial Equivalent
 
 ```
-> riders.add tag-001 Dave Wilson
-[RIDER] Added/updated: tag-001 -> Dave Wilson
+> api riders/add {"tagId":"tag-001","displayName":"Dave Wilson"}
 ```
 
 ### Examples
@@ -185,7 +183,7 @@ Response:
 
 ## DELETE /api/riders
 
-Remove a rider from the roster.
+Remove a rider from the roster. The tag ID can be given either as a query parameter (`DELETE /api/riders?tagId=tag-001`) or in a JSON body.
 
 ### Request
 
@@ -202,7 +200,7 @@ Content-Type: application/json
 
 | Field | Type | Required |
 |-------|------|----------|
-| `tagId` | string | Yes |
+| `tagId` | string | Yes (query param or body) |
 
 ### Response (Success)
 
@@ -212,29 +210,17 @@ Content-Type: application/json
 }
 ```
 
-### Response (Error)
-
-```json
-{
-  "error": "Rider not found"
-}
-```
-
-### Validation Rules
-
-- `tagId`: Required; must match an existing rider
+Deleting a tag that does not exist still returns `{"ok":true}` (idempotent delete). The only error is a missing `tagId` (`400`).
 
 ### Side Effects
 
 1. Rider entry removed from NVS
-2. All riders after the deleted entry are shifted down in the array
-3. No device restart required
+2. Updated roster broadcast to peer gates over ESP-Now and exported to `/riders.json`
 
 ### Serial Equivalent
 
 ```
-> riders.del tag-001
-[RIDER] Deleted: tag-001
+> api riders/delete {"tagId":"tag-001"}
 ```
 
 ### Examples
@@ -257,21 +243,6 @@ for id in 001 002; do
 done
 ```
 
-### Error: Rider not found
-
-```sh
-curl -X DELETE http://192.168.4.1/api/riders \
-  -H 'Content-Type: application/json' \
-  -d '{"tagId":"nonexistent"}'
-```
-
-Response:
-```json
-{
-  "error": "Rider not found"
-}
-```
-
 ---
 
 ## Notes
@@ -280,4 +251,5 @@ Response:
 - **Persistence**: All riders are stored in NVS and survive power cycles
 - **Identifier format**: `riderId` is always `rider-<tagId>`. Example: if `tagId = "chip-12345"`, then `riderId = "rider-chip-12345"`
 - **Upsert behavior**: POST always creates or updates; use the same `tagId` to overwrite a rider's display name
+- **Roster sync**: only edit riders on the start gate; finish/intermediate gates receive the roster via ESP-Now and overwrite their local copy
 - **Deletion**: Reorders the internal array; indices may change, but `tagId` and `riderId` remain stable

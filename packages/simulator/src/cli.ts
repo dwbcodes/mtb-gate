@@ -1,3 +1,6 @@
+// `npm run simulate` — prints a snapshot + first pending upload for a
+// fixed two-rider session with overlapping runs (Ben's countdown starts
+// before Ada finishes), the core scenario the run queue must support.
 import { SessionSimulator } from "./session-simulator.ts";
 
 const simulator = new SessionSimulator({

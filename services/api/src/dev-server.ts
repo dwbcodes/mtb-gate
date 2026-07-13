@@ -1,3 +1,7 @@
+// `npm run api:dev` — local stand-in for the cloud sync endpoint on
+// :8787 (override with MTB_GATE_API_HOST/MTB_GATE_API_PORT). Routes:
+// GET /health, GET /roster, GET /results?date=&riderId=, POST /attempts.
+// State is in-memory only and resets on restart.
 import { createServer } from "node:http";
 import { InMemoryAttemptStore } from "./store.ts";
 import { getResults, getRoster, postAttempts } from "./handlers.ts";

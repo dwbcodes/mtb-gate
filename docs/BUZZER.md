@@ -1,34 +1,32 @@
-# Buzzer Countdown Audio Feedback
+# Buzzer Audio Feedback
 
 ## Hardware
 
-- **Component**: 85dB passive buzzer (3.3V compatible)
-- **Pin**: GPIO 7
-- **Wiring**: Signal wire to GPIO 7, other wire to GND
-- **Resistor**: Not needed for most 3.3V passive buzzers; add 100ohm if buzzer draws >20mA
+- **Component**: 85 dB passive buzzer (3.3 V compatible)
+- **Pin**: GPIO 5 (`BUZZER_PIN` in `firmware/gate/src/main.cpp`)
+- **Wiring**: signal wire to GPIO 5, other wire to GND
+- **Resistor**: not needed for most 3.3 V passive buzzers; add 100 Ω if the buzzer draws >20 mA
 
 ### Pin Selection
 
-GPIO 7 was chosen because it avoids conflicts with:
-- I2C (GPIO 8/10 used by NFC)
-- Sensor Line 1 (GPIO 0)
-- Sensor Line 2 (GPIO 2/3)
+GPIO 5 avoids conflicts with:
+- I2C for the NFC reader (GPIO 8 = SDA, GPIO 10 = SCL)
+- The pressure sensor ADC input (GPIO 4)
 
-## Countdown Pattern
+## Sound Patterns
 
-| Countdown | Action | Frequency | Duration |
-|-----------|--------|-----------|----------|
-| 10 (scan) | Long low buzz | 500 Hz | 500ms |
-| 9, 8, 7, 6 | Silent | -- | -- |
-| 5 | Medium buzz | 800 Hz | 300ms |
-| 4 | Silent | -- | -- |
-| 3 | Short high buzz | 1000 Hz | 200ms |
-| 2 | Short high buzz | 1000 Hz | 200ms |
-| 1 | Short high buzz | 1000 Hz | 200ms |
-| GO (0) | Long high buzz | 1500 Hz | 3000ms |
+Driven via the ESP32 LEDC PWM peripheral (channel 0), not the Arduino `tone()` API. `buzzerTone(freq, durationMs)` is non-blocking: the main loop switches the duty off when `buzzerStopAtMs` passes, keeping the 100 ms run loop responsive.
 
-## Implementation
+| Event | Sound |
+|-------|-------|
+| Rider scanned | Ascending 8-note arpeggio (200→800 Hz, "coin insert" style) |
+| Countdown second 10 | 800 Hz, 500 ms |
+| Countdown seconds 5–1 | 1000 Hz, 200 ms each |
+| GO | 2000 Hz, 2000 ms |
+| Finish received | 1500 Hz, 500 ms |
+| Calibration start | 800 Hz, 300 ms |
+| Calibration "press the tube now" | 3 × 1200 Hz, 150 ms (peer prompt: 2 × 1000 Hz) |
+| Calibration success | Rising two-tone: 800 Hz then 1200 Hz |
+| Calibration failure | Low 400 Hz, 500 ms |
 
-Uses ESP32 Arduino `tone(pin, freq, duration)` which is non-blocking -- starts PWM and returns immediately, auto-stops after the specified duration. This keeps the 100ms countdown loop responsive.
-
-`noTone(BUZZER_PIN)` is called when a run finishes to ensure the buzzer stops cleanly.
+The buzzer is forced off (`buzzerOff()`) when a run is cancelled or deleted so a GO tone never outlives its run.

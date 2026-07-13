@@ -1,5 +1,9 @@
 import type { AttemptRecord, DeviceUploadEnvelope, ResultsQuery, Rider, RosterResponse } from "../../../packages/contracts/src/index.ts";
 
+// Storage port for the sync API. ingest() must be idempotent on runId —
+// devices retry uploads, so a duplicate envelope returns the stored
+// attempt with created=false. The in-memory implementation below is the
+// dev stand-in for the planned DynamoDB single-table store.
 export interface AttemptStore {
   ingest(envelope: DeviceUploadEnvelope): { created: boolean; attempt: AttemptRecord };
   queryResults(input: ResultsQuery): AttemptRecord[];

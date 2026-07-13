@@ -2,22 +2,24 @@
   "openapi": "3.0.0",
   "info": {
     "title": "MTB Gate REST API",
-    "version": "1.0.0",
-    "description": "REST API for MTB timing gate device configuration, status monitoring, and rider management.\nAll endpoints return JSON. Device hosts on its Wi-Fi AP at http://192.168.4.1.\nNo authentication required (closed network)."
+    "version": "2.0.0",
+    "description": "REST API served by every MTB Gate device for configuration, status,\nrider management, runs/results, calibration, peer (ESP-Now) tools,\nand on-device storage. All endpoints return JSON. No authentication\n(closed network). The AP SSID always equals the device ID\n(Gate-<#>-<mac>); the AP IP is 192.168.4.<gateNumber>.\n"
   },
   "servers": [
     {
       "url": "http://192.168.4.1/api",
-      "description": "Gate device API (via local Wi-Fi AP)"
+      "description": "Start gate API (via its Wi-Fi AP; other gates are 192.168.4.<gateNumber>)"
     }
   ],
   "paths": {
     "/status": {
       "get": {
+        "tags": [
+          "Status"
+        ],
         "summary": "Get device status",
-        "description": "Returns full device status including uptime, MAC, network configuration, and ESP-Now peer connectivity state.",
+        "description": "Identity, uptime, network state, ESP-Now link state, and the live run queue.",
         "operationId": "getStatus",
-        "tags": ["Status"],
         "responses": {
           "200": {
             "description": "Device status",
@@ -30,15 +32,17 @@
             }
           }
         },
-        "x-serial-command": "status"
+        "x-serial-command": "api status"
       }
     },
     "/config": {
       "get": {
+        "tags": [
+          "Configuration"
+        ],
         "summary": "Get device configuration",
-        "description": "Returns full device configuration. Passwords are redacted as \"***\" for security.",
+        "description": "Full configuration; passwords redacted as \"***\".",
         "operationId": "getConfig",
-        "tags": ["Configuration"],
         "responses": {
           "200": {
             "description": "Device configuration",
@@ -51,15 +55,17 @@
             }
           }
         },
-        "x-serial-command": "config"
+        "x-serial-command": "api config"
       }
     },
     "/config/wifi": {
       "put": {
+        "tags": [
+          "Configuration"
+        ],
         "summary": "Update Wi-Fi configuration",
-        "description": "Update access point SSID/password, station network, and Wi-Fi channel. Device restarts Wi-Fi stack on save.",
+        "description": "Update AP password, station credentials, and Wi-Fi channel.\nThe AP SSID is not configurable (always equals deviceId).\nNetworking restarts after the response is sent.\n",
         "operationId": "putConfigWifi",
-        "tags": ["Configuration"],
         "requestBody": {
           "required": true,
           "content": {
@@ -72,34 +78,23 @@
         },
         "responses": {
           "200": {
-            "description": "Configuration saved",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse"
-                }
-              }
-            }
+            "$ref": "#/components/responses/SuccessResponse"
           },
           "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
+            "$ref": "#/components/responses/ErrorResponse"
           }
-        }
+        },
+        "x-serial-command": "api config/wifi <json>"
       }
     },
     "/config/mac": {
       "put": {
-        "summary": "Update peer MAC and gate role",
-        "description": "Update peer MAC address, gate role, and device label. ESP-Now peer is re-registered immediately.",
+        "tags": [
+          "Configuration"
+        ],
+        "summary": "Update gate number and peer MAC",
+        "description": "Role, deviceId, deviceLabel, and AP SSID are all derived from\ngateNumber (1 = start, 12 = finish, else intermediate).\nSaving reboots the device.\n",
         "operationId": "putConfigMac",
-        "tags": ["Configuration"],
         "requestBody": {
           "required": true,
           "content": {
@@ -112,34 +107,30 @@
         },
         "responses": {
           "200": {
-            "description": "Configuration saved",
+            "description": "Saved; device is rebooting",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse"
+                  "$ref": "#/components/schemas/RebootingResponse"
                 }
               }
             }
           },
           "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
+            "$ref": "#/components/responses/ErrorResponse"
           }
-        }
+        },
+        "x-serial-command": "api config/mac <json>"
       }
     },
     "/config/time": {
       "put": {
+        "tags": [
+          "Configuration"
+        ],
         "summary": "Update sensor trigger calibration",
-        "description": "Update the active baseline-relative sensor trigger delta. Firmware triggers when sensor voltage rises above rolling baseline + triggerDelta. Legacy absolute threshold fields are accepted for compatibility but are not the active trigger path.",
+        "description": "Sets the active baseline-relative trigger delta. A trigger fires when\nthe sensor reading deviates from the rolling baseline by more than\ntriggerDelta volts in either direction. Legacy absolute threshold\nfields are accepted and stored but are not the active trigger path.\n",
         "operationId": "putConfigTime",
-        "tags": ["Configuration"],
         "requestBody": {
           "required": true,
           "content": {
@@ -152,34 +143,38 @@
         },
         "responses": {
           "200": {
-            "description": "Configuration saved",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse"
-                }
-              }
-            }
+            "$ref": "#/components/responses/SuccessResponse"
           },
           "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
+            "$ref": "#/components/responses/ErrorResponse"
           }
-        }
+        },
+        "x-serial-command": "api config/time <json>"
+      }
+    },
+    "/reboot": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Reboot the device",
+        "operationId": "postReboot",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SuccessResponse"
+          }
+        },
+        "x-serial-command": "reboot"
       }
     },
     "/riders": {
       "get": {
+        "tags": [
+          "Riders"
+        ],
         "summary": "List all riders",
-        "description": "Returns array of all registered riders (max 32 per device).",
+        "description": "Registered riders (max 32 per device).",
         "operationId": "getRiders",
-        "tags": ["Riders"],
         "responses": {
           "200": {
             "description": "List of riders",
@@ -195,13 +190,15 @@
             }
           }
         },
-        "x-serial-command": "riders"
+        "x-serial-command": "api riders"
       },
       "post": {
+        "tags": [
+          "Riders"
+        ],
         "summary": "Register or update rider",
-        "description": "Register a new rider or update an existing rider's display name (upsert by tagId).",
+        "description": "Upsert by tagId. Changes are broadcast to peer gates over ESP-Now.\nWhen the roster is full (32), a new tag is silently ignored.\n",
         "operationId": "postRiders",
-        "tags": ["Riders"],
         "requestBody": {
           "required": true,
           "content": {
@@ -214,35 +211,33 @@
         },
         "responses": {
           "200": {
-            "description": "Rider registered",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RiderResponse"
-                }
-              }
-            }
+            "$ref": "#/components/responses/SuccessResponse"
           },
           "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
+            "$ref": "#/components/responses/ErrorResponse"
           }
         },
-        "x-serial-command": "riders.add <tagId> <name>"
+        "x-serial-command": "api riders/add <json>"
       },
       "delete": {
+        "tags": [
+          "Riders"
+        ],
         "summary": "Remove rider",
-        "description": "Remove a rider from the roster by tag ID.",
+        "description": "tagId may be a query parameter (?tagId=...) or a JSON body field.\nIdempotent \u2014 deleting an unknown tag still returns ok.\n",
         "operationId": "deleteRiders",
-        "tags": ["Riders"],
+        "parameters": [
+          {
+            "name": "tagId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
-          "required": true,
+          "required": false,
           "content": {
             "application/json": {
               "schema": {
@@ -253,58 +248,506 @@
         },
         "responses": {
           "200": {
-            "description": "Rider deleted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse"
-                }
-              }
-            }
+            "$ref": "#/components/responses/SuccessResponse"
           },
-          "404": {
-            "description": "Rider not found",
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "x-serial-command": "api riders/delete <json>"
+      }
+    },
+    "/results": {
+      "get": {
+        "tags": [
+          "Runs"
+        ],
+        "summary": "List results (live queue + persisted runs)",
+        "description": "Live runs first, then persisted summaries newest-first; each entry carries a \"live\" flag.",
+        "operationId": "getResults",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "minimum": 1,
+              "maximum": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Merged results array",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ResultEntry"
+                  }
                 }
               }
             }
           }
+        }
+      },
+      "post": {
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Start a run for a registered rider",
+        "description": "Start gate only. Re-scanning the active rider's tag cancels their run instead.",
+        "operationId": "postResults",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tagId": {
+                    "type": "string",
+                    "example": "04AB12CD"
+                  }
+                },
+                "required": [
+                  "tagId"
+                ]
+              }
+            }
+          }
         },
-        "x-serial-command": "riders.del <tagId>"
+        "responses": {
+          "200": {
+            "description": "Run started (or previous run cancelled by re-scan)"
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "409": {
+            "description": "Not the start gate"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Delete a run (live or persisted)",
+        "operationId": "deleteResults",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "runId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "runId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SuccessResponse"
+          },
+          "404": {
+            "description": "Run not found"
+          }
+        }
+      }
+    },
+    "/results/stop": {
+      "post": {
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Cancel the active run",
+        "operationId": "postResultsStop",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SuccessResponse"
+          },
+          "409": {
+            "description": "No active run"
+          }
+        }
+      }
+    },
+    "/runs": {
+      "get": {
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Persisted run summaries",
+        "description": "Newest first across sessions; max 50.",
+        "operationId": "getRuns",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "minimum": 1,
+              "maximum": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Array of run summaries"
+          }
+        },
+        "x-serial-command": "api runs"
+      }
+    },
+    "/events": {
+      "get": {
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Current-session event log",
+        "operationId": "getEvents",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "minimum": 1,
+              "maximum": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Array of event records"
+          }
+        }
       }
     },
     "/ping": {
       "post": {
-        "summary": "Send test ping to peer",
-        "description": "Send a test ping message to the configured peer gate to verify ESP-Now link.",
+        "tags": [
+          "Peer"
+        ],
+        "summary": "API liveness check",
+        "description": "Returns {\"ok\":true,\"sent\":false}; does not touch the radio. Use /peer/* for real link tests.",
         "operationId": "postPing",
-        "tags": ["Diagnostics"],
         "responses": {
           "200": {
-            "description": "Ping sent",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Peer MAC not configured",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
+            "$ref": "#/components/responses/SuccessResponse"
           }
         },
-        "x-serial-command": "ping"
+        "x-serial-command": "api ping"
+      }
+    },
+    "/peer/ping": {
+      "post": {
+        "tags": [
+          "Peer"
+        ],
+        "summary": "Broadcast an ESP-Now discovery ping (start gate only)",
+        "operationId": "postPeerPing",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SuccessResponse"
+          },
+          "409": {
+            "description": "Start gate only / ESP-Now not ready"
+          }
+        }
+      }
+    },
+    "/peer/test": {
+      "post": {
+        "tags": [
+          "Peer"
+        ],
+        "summary": "Test the peer link",
+        "description": "Sends a clock-sync request and returns RTT, reachability, and clock state.",
+        "operationId": "postPeerTest",
+        "responses": {
+          "200": {
+            "description": "Link report"
+          },
+          "409": {
+            "description": "ESP-Now not ready"
+          }
+        }
+      }
+    },
+    "/peer/sync": {
+      "post": {
+        "tags": [
+          "Peer"
+        ],
+        "summary": "Request a clock sync with the peer (start gate only)",
+        "operationId": "postPeerSync",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SuccessResponse"
+          },
+          "409": {
+            "description": "Start gate only / ESP-Now not ready / no peer"
+          }
+        }
+      }
+    },
+    "/peer/clock": {
+      "get": {
+        "tags": [
+          "Peer"
+        ],
+        "summary": "Read clock-sync state",
+        "operationId": "getPeerClock",
+        "responses": {
+          "200": {
+            "description": "Clock offset, RTT, and sync age"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Peer"
+        ],
+        "summary": "Request a clock sync and return last known sync data (start gate only)",
+        "operationId": "postPeerClock",
+        "responses": {
+          "200": {
+            "description": "Sync requested; last known values returned"
+          },
+          "409": {
+            "description": "Start gate only / ESP-Now not ready"
+          }
+        }
+      }
+    },
+    "/peer/riders/sync": {
+      "post": {
+        "tags": [
+          "Peer"
+        ],
+        "summary": "Re-broadcast the rider roster to peer gates (start gate only)",
+        "operationId": "postPeerRidersSync",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SuccessResponse"
+          },
+          "409": {
+            "description": "Start gate only / ESP-Now not ready"
+          }
+        }
+      }
+    },
+    "/storage": {
+      "get": {
+        "tags": [
+          "Storage"
+        ],
+        "summary": "Filesystem usage and current session number",
+        "operationId": "getStorage",
+        "responses": {
+          "200": {
+            "description": "totalBytes / usedBytes / freeBytes / currentSession"
+          }
+        },
+        "x-serial-command": "api storage"
+      }
+    },
+    "/storage/prune": {
+      "post": {
+        "tags": [
+          "Storage"
+        ],
+        "summary": "Prune old sessions (keeps latest 5)",
+        "operationId": "postStoragePrune",
+        "responses": {
+          "200": {
+            "description": "Storage report after pruning"
+          }
+        }
+      }
+    },
+    "/sessions": {
+      "get": {
+        "tags": [
+          "Storage"
+        ],
+        "summary": "List recorded sessions with manifests and sync status",
+        "operationId": "getSessions",
+        "responses": {
+          "200": {
+            "description": "Array of session descriptors"
+          }
+        }
+      }
+    },
+    "/sessions/file": {
+      "get": {
+        "tags": [
+          "Storage"
+        ],
+        "summary": "Fetch a session file",
+        "operationId": "getSessionFile",
+        "parameters": [
+          {
+            "name": "num",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "file",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "events.jsonl",
+                "runs.jsonl",
+                "manifest.json",
+                "sync.json"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File contents"
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "404": {
+            "description": "File not found"
+          }
+        }
+      }
+    },
+    "/files": {
+      "get": {
+        "tags": [
+          "Storage"
+        ],
+        "summary": "Browse the device filesystem",
+        "operationId": "getFiles",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "/"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Directory listing"
+          },
+          "404": {
+            "description": "Path not found"
+          }
+        }
+      }
+    },
+    "/files/view": {
+      "get": {
+        "tags": [
+          "Storage"
+        ],
+        "summary": "View a file (truncated at 24 KB)",
+        "operationId": "getFileView",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File contents (X-File-Truncated header signals truncation)"
+          },
+          "404": {
+            "description": "File not found"
+          }
+        }
+      }
+    },
+    "/nfc/listen": {
+      "post": {
+        "tags": [
+          "NFC"
+        ],
+        "summary": "Open a 15-second NFC listen window",
+        "operationId": "postNfcListen",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SuccessResponse"
+          },
+          "503": {
+            "description": "NFC reader not detected"
+          }
+        }
+      }
+    },
+    "/nfc/tag": {
+      "get": {
+        "tags": [
+          "NFC"
+        ],
+        "summary": "Poll for the tag scanned during the listen window",
+        "operationId": "getNfcTag",
+        "responses": {
+          "200": {
+            "description": "{\"ok\":true,\"tagId\":\"...\"} or {\"ok\":false,\"tagId\":null}"
+          }
+        }
+      }
+    },
+    "/nfc/diagnostics": {
+      "get": {
+        "tags": [
+          "NFC"
+        ],
+        "summary": "NFC reader init state and wiring hints",
+        "operationId": "getNfcDiagnostics",
+        "responses": {
+          "200": {
+            "description": "Initialized flag and message"
+          }
+        }
+      }
+    },
+    "/i2c/scan": {
+      "get": {
+        "tags": [
+          "NFC"
+        ],
+        "summary": "Scan the I2C bus for devices",
+        "operationId": "getI2cScan",
+        "responses": {
+          "200": {
+            "description": "Detected I2C addresses"
+          }
+        }
       }
     }
   },
@@ -318,102 +761,227 @@
             "example": true
           }
         },
-        "required": ["ok"]
+        "required": [
+          "ok"
+        ]
+      },
+      "RebootingResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "example": true
+          },
+          "rebooting": {
+            "type": "boolean",
+            "example": true
+          }
+        },
+        "required": [
+          "ok"
+        ]
       },
       "ErrorResponse": {
         "type": "object",
         "properties": {
           "error": {
             "type": "string",
-            "example": "Device label is required"
+            "example": "wifiChannel must be 1-13"
           }
         },
-        "required": ["error"]
+        "required": [
+          "error"
+        ]
       },
       "DeviceStatus": {
         "type": "object",
         "properties": {
           "deviceId": {
             "type": "string",
-            "example": "gate-1234",
-            "description": "Unique device ID (auto-generated from MAC)"
+            "example": "Gate-Start-a1b2c3d4e5f6",
+            "description": "Gate-<#>-<mac>; gate 1 renders as Gate-Start-<mac>, gate 12 as Gate-Finish-<mac>. Also the AP SSID."
           },
           "deviceLabel": {
             "type": "string",
-            "example": "Start Gate",
-            "description": "User-friendly device name"
+            "example": "Gate Start"
           },
           "role": {
             "type": "string",
-            "enum": ["start", "finish", "intermediate"],
-            "example": "start",
-            "description": "Gate role"
+            "enum": [
+              "start",
+              "finish",
+              "intermediate"
+            ],
+            "description": "Derived from gateNumber"
           },
           "mac": {
             "type": "string",
-            "example": "dc:b4:d9:9c:48:ec",
-            "description": "Device's own MAC address"
+            "example": "DC:B4:D9:9C:48:EC"
           },
           "uptimeMs": {
             "type": "integer",
-            "example": 123456789,
-            "description": "Milliseconds since boot"
+            "example": 234567
           },
           "apSsid": {
             "type": "string",
-            "example": "MTBGate-gate-1234",
-            "description": "Access point SSID"
+            "example": "Gate-Start-a1b2c3d4e5f6",
+            "description": "Always equals deviceId"
           },
           "apIp": {
             "type": "string",
             "example": "192.168.4.1",
-            "description": "Access point IP address"
+            "description": "192.168.4.<gateNumber>"
           },
           "staSsid": {
             "type": "string",
-            "example": "MyNetwork",
-            "description": "Connected station network name (empty if not configured)"
+            "example": ""
           },
           "staIp": {
             "type": "string",
-            "example": "192.168.1.100",
-            "description": "Station network IP (0.0.0.0 if not connected)"
+            "example": "0.0.0.0"
+          },
+          "startThreshold": {
+            "type": "number",
+            "format": "float",
+            "description": "Legacy; not the active trigger path"
+          },
+          "finishThreshold": {
+            "type": "number",
+            "format": "float",
+            "description": "Legacy; not the active trigger path"
+          },
+          "line2Threshold": {
+            "type": "number",
+            "format": "float",
+            "description": "Legacy; not the active trigger path"
+          },
+          "triggerDelta": {
+            "type": "number",
+            "format": "float",
+            "example": 0.3,
+            "description": "Active trigger delta (volts from rolling baseline)"
           },
           "espNow": {
             "type": "object",
             "properties": {
-              "connected": {
+              "configured": {
                 "type": "boolean",
-                "example": true,
-                "description": "true if peer heard from in last 60 seconds"
+                "description": "True once a peer MAC is set"
               },
               "peerMac": {
                 "type": "string",
-                "example": "0c:4e:a0:66:a4:14",
-                "description": "Configured peer MAC address"
+                "example": "0C:4E:A0:66:A4:14"
               },
-              "timeSinceSyncMs": {
+              "lastRttMs": {
                 "type": "integer",
-                "example": 5000,
-                "description": "Milliseconds since last Ping/Pong exchange"
+                "description": "Last clock-sync round-trip (start gate)"
               },
-              "rttMs": {
+              "lastSyncAgoMs": {
                 "type": "integer",
-                "example": 14,
-                "description": "Round-trip latency to peer (start gate only)"
+                "description": "ms since last completed sync; -1 = never"
               },
-              "clockOffsetMs": {
-                "type": "integer",
-                "example": 8,
-                "description": "Time correction vs. start gate (non-start gates only)"
+              "reachable": {
+                "type": "boolean",
+                "description": "Sync completed within the last 60 s"
               },
-              "retries": {
-                "type": "integer",
-                "example": 0,
-                "description": "Current retry count (0 if not retrying)"
+              "wifiChannel": {
+                "type": "integer"
               }
-            },
-            "required": ["connected", "peerMac", "timeSinceSyncMs", "rttMs", "clockOffsetMs", "retries"]
+            }
+          },
+          "queue": {
+            "type": "array",
+            "description": "Live runs with per-run metrics (null until both timestamps exist)",
+            "items": {
+              "$ref": "#/components/schemas/QueueEntry"
+            }
+          }
+        }
+      },
+      "QueueEntry": {
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "riderId": {
+            "type": "string",
+            "example": "rider-04AB12CD"
+          },
+          "riderName": {
+            "type": "string",
+            "example": "Dave Wilson"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "Queued",
+              "Countdown",
+              "AwaitingStart",
+              "OnCourse",
+              "Finished",
+              "TimedOut",
+              "Cancelled"
+            ]
+          },
+          "metrics": {
+            "type": "object",
+            "properties": {
+              "reactionMs": {
+                "type": "integer",
+                "nullable": true,
+                "description": "GO -> line1"
+              },
+              "launchMs": {
+                "type": "integer",
+                "nullable": true,
+                "description": "line1 -> line2"
+              },
+              "courseMs": {
+                "type": "integer",
+                "nullable": true,
+                "description": "line1 -> finish"
+              }
+            }
+          }
+        }
+      },
+      "ResultEntry": {
+        "type": "object",
+        "description": "Queue entry or persisted run summary; \"live\" distinguishes them.",
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "riderId": {
+            "type": "string"
+          },
+          "riderName": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "live": {
+            "type": "boolean"
+          },
+          "reactionMs": {
+            "type": "integer",
+            "nullable": true
+          },
+          "launchMs": {
+            "type": "integer",
+            "nullable": true
+          },
+          "courseMs": {
+            "type": "integer",
+            "nullable": true
+          },
+          "falseStart": {
+            "type": "boolean"
+          },
+          "completedAtMs": {
+            "type": "integer"
           }
         }
       },
@@ -422,136 +990,116 @@
         "properties": {
           "deviceId": {
             "type": "string",
-            "example": "gate-1234",
-            "description": "Unique device ID (read-only)"
+            "example": "Gate-Start-a1b2c3d4e5f6",
+            "description": "Derived from gateNumber + eFuse MAC (read-only)"
           },
           "deviceLabel": {
             "type": "string",
-            "example": "Start Gate",
-            "description": "User-friendly device name"
+            "example": "Gate Start",
+            "description": "Derived from gateNumber"
+          },
+          "gateNumber": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 254,
+            "example": 1,
+            "description": "Source of truth: 1 = start, 12 = finish, else intermediate"
           },
           "role": {
             "type": "string",
-            "enum": ["start", "finish", "intermediate"],
-            "example": "start"
-          },
-          "apSsid": {
-            "type": "string",
-            "example": "MTBGate-gate-1234",
-            "minLength": 1,
-            "maxLength": 32
+            "enum": [
+              "start",
+              "finish",
+              "intermediate"
+            ],
+            "description": "Derived from gateNumber (read-only)"
           },
           "apPassword": {
             "type": "string",
             "example": "***",
-            "description": "Always returned as *** for security"
+            "description": "Always returned as ***"
           },
           "staSsid": {
             "type": "string",
-            "example": "MyNetwork",
-            "maxLength": 32
+            "example": "MyNetwork"
           },
           "staPassword": {
             "type": "string",
             "example": "***",
-            "description": "Always returned as *** for security"
+            "description": "Always returned as ***"
           },
           "startThreshold": {
             "type": "number",
             "format": "float",
-            "example": 0.85,
-            "minimum": 0.0,
-            "maximum": 2.0,
-            "description": "Legacy stored absolute threshold; not used by current trigger logic"
+            "description": "Legacy; not the active trigger path"
           },
           "line2Threshold": {
             "type": "number",
             "format": "float",
-            "example": 0.85,
-            "minimum": 0.0,
-            "maximum": 2.0,
-            "description": "Legacy stored absolute threshold; not used by current trigger logic"
+            "description": "Legacy; not the active trigger path"
           },
           "finishThreshold": {
             "type": "number",
             "format": "float",
-            "example": 0.85,
-            "minimum": 0.0,
-            "maximum": 2.0,
-            "description": "Legacy stored absolute threshold; not used by current trigger logic"
+            "description": "Legacy; not the active trigger path"
           },
           "triggerDelta": {
             "type": "number",
             "format": "float",
-            "example": 0.30,
+            "example": 0.3,
             "minimum": 0.01,
             "maximum": 2.0,
-            "description": "Active trigger delta in volts above the rolling baseline"
+            "description": "Active trigger delta in volts from the rolling baseline"
           },
           "wifiChannel": {
             "type": "integer",
-            "example": 6,
             "minimum": 1,
             "maximum": 13
           },
           "peerMac": {
             "type": "string",
-            "example": "0c:4e:a0:66:a4:14",
+            "example": "0C:4E:A0:66:A4:14",
             "pattern": "^([0-9a-fA-F]{2}:){5}([0-9a-fA-F]{2})$|^$",
-            "description": "Peer gate MAC (AA:BB:CC:DD:EE:FF or empty for auto-discover)"
+            "description": "Peer gate MAC (empty = auto-discover)"
           }
         }
       },
       "WiFiConfig": {
         "type": "object",
+        "description": "Omitted fields are left unchanged. AP SSID is not configurable.",
         "properties": {
-          "apSsid": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 32,
-            "description": "Access point SSID"
-          },
           "apPassword": {
             "type": "string",
-            "minLength": 0,
-            "maxLength": 63,
-            "description": "AP password (empty or >= 8 chars)"
+            "description": "Empty (open AP) or >= 8 chars"
           },
           "staSsid": {
             "type": "string",
-            "maxLength": 32,
             "description": "Station network SSID (empty = don't join)"
           },
           "staPassword": {
-            "type": "string",
-            "maxLength": 63,
-            "description": "Station password (empty or >= 8 chars)"
+            "type": "string"
           },
           "wifiChannel": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 13,
-            "description": "Wi-Fi channel (1–13)"
+            "maximum": 13
           }
         }
       },
       "MacConfig": {
         "type": "object",
+        "description": "Omitted fields are left unchanged. Saving reboots the device.",
         "properties": {
+          "gateNumber": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 254,
+            "description": "1 = start, 12 = finish, else intermediate; drives role/deviceId/label/AP"
+          },
           "peerMac": {
             "type": "string",
             "pattern": "^([0-9a-fA-F]{2}:){5}([0-9a-fA-F]{2})$|^$",
-            "description": "Peer MAC (AA:BB:CC:DD:EE:FF or empty for auto-discover)"
-          },
-          "role": {
-            "type": "string",
-            "enum": ["start", "finish", "intermediate"],
-            "description": "Gate role"
-          },
-          "deviceLabel": {
-            "type": "string",
-            "maxLength": 48,
-            "description": "User-friendly device name"
+            "description": "Peer MAC (AA:BB:CC:DD:EE:FF) or empty for auto-discover"
           }
         }
       },
@@ -563,28 +1111,28 @@
             "format": "float",
             "minimum": 0.01,
             "maximum": 2.0,
-            "description": "Active trigger delta in volts above the rolling baseline"
+            "description": "Active trigger delta in volts from the rolling baseline"
           },
           "startThreshold": {
             "type": "number",
             "format": "float",
             "minimum": 0.0,
             "maximum": 2.0,
-            "description": "Legacy stored absolute threshold; not used by current trigger logic"
+            "description": "Legacy; stored but inactive"
           },
           "line2Threshold": {
             "type": "number",
             "format": "float",
             "minimum": 0.0,
             "maximum": 2.0,
-            "description": "Legacy stored absolute threshold; not used by current trigger logic"
+            "description": "Legacy; stored but inactive"
           },
           "finishThreshold": {
             "type": "number",
             "format": "float",
             "minimum": 0.0,
             "maximum": 2.0,
-            "description": "Legacy stored absolute threshold; not used by current trigger logic"
+            "description": "Legacy; stored but inactive"
           }
         }
       },
@@ -593,84 +1141,102 @@
         "properties": {
           "riderId": {
             "type": "string",
-            "example": "rider-tag-001",
-            "description": "Unique rider ID (rider-<tagId>, read-only)"
+            "example": "rider-04AB12CD",
+            "description": "Always rider-<tagId> (read-only)"
           },
           "displayName": {
             "type": "string",
-            "example": "Dave Wilson",
-            "description": "User-friendly rider name"
+            "example": "Dave Wilson"
           },
           "tagId": {
             "type": "string",
-            "example": "tag-001",
-            "description": "NFC tag ID"
+            "example": "04AB12CD",
+            "description": "NFC tag UID (hex)"
           }
         },
-        "required": ["riderId", "displayName", "tagId"]
+        "required": [
+          "riderId",
+          "displayName",
+          "tagId"
+        ]
       },
       "RiderInput": {
         "type": "object",
         "properties": {
           "tagId": {
             "type": "string",
-            "example": "tag-001",
-            "description": "NFC tag ID (unique per rider)"
+            "example": "04AB12CD"
           },
           "displayName": {
             "type": "string",
-            "minLength": 1,
-            "maxLength": 128,
-            "example": "Dave Wilson",
-            "description": "User-friendly rider name"
+            "example": "Dave Wilson"
           }
         },
-        "required": ["tagId", "displayName"]
+        "required": [
+          "tagId",
+          "displayName"
+        ]
       },
       "RiderDelete": {
         "type": "object",
         "properties": {
           "tagId": {
             "type": "string",
-            "example": "tag-001",
-            "description": "NFC tag ID to delete"
+            "example": "04AB12CD"
           }
         },
-        "required": ["tagId"]
+        "required": [
+          "tagId"
+        ]
+      }
+    },
+    "responses": {
+      "SuccessResponse": {
+        "description": "Operation successful",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SuccessResponse"
+            }
+          }
+        }
       },
-      "RiderResponse": {
-        "type": "object",
-        "properties": {
-          "ok": {
-            "type": "boolean",
-            "example": true
-          },
-          "riderId": {
-            "type": "string",
-            "example": "rider-tag-001",
-            "description": "The created/updated rider ID"
+      "ErrorResponse": {
+        "description": "Validation error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
           }
-        },
-        "required": ["ok", "riderId"]
+        }
       }
     }
   },
   "tags": [
     {
-      "name": "Status",
-      "description": "Device status and monitoring"
+      "name": "Status"
     },
     {
-      "name": "Configuration",
-      "description": "Device configuration (Wi-Fi, sensors, peer)"
+      "name": "Configuration"
     },
     {
-      "name": "Riders",
-      "description": "Rider registration and management"
+      "name": "System"
     },
     {
-      "name": "Diagnostics",
-      "description": "Testing and debugging"
+      "name": "Riders"
+    },
+    {
+      "name": "Runs"
+    },
+    {
+      "name": "Peer"
+    },
+    {
+      "name": "Storage"
+    },
+    {
+      "name": "NFC"
     }
   ]
 }

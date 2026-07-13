@@ -4,6 +4,11 @@
 #include <Preferences.h>
 #include "gate_types.h"
 
+// gateNumber is the single source of truth: role, deviceId, and
+// deviceLabel are all derived from it (1 = Start, 12 = Finish, else
+// Intermediate — see buildDeviceId()/defaultDeviceLabel() and
+// updateMacConfigFromJson() in main.cpp). role is persisted redundantly
+// for convenience but recomputed from gateNumber on every load().
 struct GateConfig {
   String deviceId;
   String deviceLabel;
@@ -13,17 +18,21 @@ struct GateConfig {
   float startThreshold;
   float finishThreshold;
   float line2Threshold;
-  float triggerDelta;
+  float triggerDelta;  // voltage delta above/below baseline that counts as a trigger; set by calibration
   uint8_t wifiChannel;
   GateRole role;
   String peerMac;
   uint8_t gateNumber;
 };
 
+// Persists GateConfig to NVS ("mtb-gate" namespace) via Preferences.
 class GateConfigStore {
 public:
   GateConfig load();
   GateConfig save(const GateConfig& config);
+  // deviceId format: "Gate-<#>-<mac>", with "Start"/"Finish" substituted
+  // for the number when gateNumber is 1/12 respectively. Also used as the
+  // AP SSID and DHCP hostname.
   static String buildDeviceId(uint8_t gateNumber);
 
 private:

@@ -10,6 +10,13 @@ import {
   withUpdatedAttempt
 } from "../../contracts/src/index.ts";
 
+// Deterministic in-memory model of a practice session: drive runs through
+// the same lifecycle the start gate does (queue -> countdown -> go ->
+// start/line2/finish triggers) with caller-supplied timestamps, so
+// overlapping-run and upload/ack behavior can be tested without hardware.
+// Completed runs land on an upload queue as DeviceUploadEnvelopes, matching
+// what a gate would POST to the cloud sync endpoint.
+
 interface RunState {
   attempt: AttemptRecord;
   events: GateEvent[];

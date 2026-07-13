@@ -1,3 +1,6 @@
+// Transport-agnostic HTTP handlers for the cloud sync API, written
+// against plain (statusCode, headers, body) tuples so the same functions
+// serve the local dev server today and a Lambda adapter later.
 import type { DailyResultsResponse, DeviceUploadEnvelope } from "../../../packages/contracts/src/index.ts";
 import type { AttemptStore } from "./store.ts";
 

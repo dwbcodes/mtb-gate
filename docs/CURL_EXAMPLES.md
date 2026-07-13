@@ -4,10 +4,9 @@ Quick reference for testing the API with curl.
 
 ## Setup
 
-All examples assume the gate is accessible at `http://192.168.4.1`. Connect to the gate's Wi-Fi AP first.
+Connect to the gate's Wi-Fi AP first (SSID = device ID, e.g. `Gate-Start-a1b2c3d4e5f6`). The start gate is at `192.168.4.1`; other gates at `192.168.4.<gateNumber>`.
 
 ```sh
-# Set up a variable for convenience
 GATE="http://192.168.4.1/api"
 ```
 
@@ -18,26 +17,24 @@ GATE="http://192.168.4.1/api"
 curl $GATE/status | jq .
 ```
 
-Output:
+Output (abridged):
 ```json
 {
-  "deviceId": "gate-3c0a",
-  "deviceLabel": "Start Gate",
+  "deviceId": "Gate-Start-a1b2c3d4e5f6",
   "role": "start",
-  "mac": "dc:b4:d9:9c:48:ec",
-  "uptimeMs": 234567,
-  "apSsid": "MTBGate-gate-3c0a",
+  "mac": "DC:B4:D9:9C:48:EC",
+  "apSsid": "Gate-Start-a1b2c3d4e5f6",
   "apIp": "192.168.4.1",
-  "staSsid": "",
-  "staIp": "0.0.0.0",
+  "triggerDelta": 0.30,
   "espNow": {
-    "connected": true,
-    "peerMac": "0c:4e:a0:66:a4:14",
-    "timeSinceSyncMs": 2345,
-    "rttMs": 14,
-    "clockOffsetMs": 0,
-    "retries": 0
-  }
+    "configured": true,
+    "peerMac": "0C:4E:A0:66:A4:14",
+    "lastRttMs": 14,
+    "lastSyncAgoMs": 2345,
+    "reachable": true,
+    "wifiChannel": 1
+  },
+  "queue": []
 }
 ```
 
@@ -49,58 +46,59 @@ curl $GATE/config | jq .
 ### Extract just the device ID
 ```sh
 curl -s $GATE/status | jq -r '.deviceId'
-# Output: gate-3c0a
 ```
 
-### Check if connected to peer
+### Check if the peer is reachable
 ```sh
-curl -s $GATE/status | jq '.espNow.connected'
-# Output: true
+curl -s $GATE/status | jq '.espNow.reachable'
 ```
 
 ## Wi-Fi Configuration
 
-### Update AP password only
+The AP SSID is not configurable (it always equals the device ID).
+
+### Update AP password
 ```sh
 curl -X PUT $GATE/config/wifi \
   -H 'Content-Type: application/json' \
-  -d '{"apSsid":"MTBGate","apPassword":"newpass123"}'
+  -d '{"apPassword":"newpass123"}'
 ```
 
-### Configure station network
+### Join a station network
 ```sh
 curl -X PUT $GATE/config/wifi \
   -H 'Content-Type: application/json' \
-  -d '{
-    "apSsid": "MTBGate",
-    "apPassword": "localpass1",
-    "staSsid": "CampNetwork",
-    "staPassword": "camppass1",
-    "wifiChannel": 11
-  }'
+  -d '{"staSsid":"CampNetwork","staPassword":"camppass1"}'
 ```
 
-### Change Wi-Fi channel only
+### Change Wi-Fi channel (set on the start gate; peers auto-adopt)
 ```sh
 curl -X PUT $GATE/config/wifi \
   -H 'Content-Type: application/json' \
   -d '{"wifiChannel": 6}'
 ```
 
-### Disconnect from station network
+### Leave the station network
 ```sh
 curl -X PUT $GATE/config/wifi \
   -H 'Content-Type: application/json' \
   -d '{"staSsid": ""}'
 ```
 
-## Peer MAC & Role
+## Gate Number & Peer MAC
 
-### Set peer MAC (on finish gate)
+### Make a device the finish gate (reboots)
 ```sh
 curl -X PUT $GATE/config/mac \
   -H 'Content-Type: application/json' \
-  -d '{"peerMac":"dc:b4:d9:9c:48:ec"}'
+  -d '{"gateNumber":12}'
+```
+
+### Set peer MAC explicitly
+```sh
+curl -X PUT $GATE/config/mac \
+  -H 'Content-Type: application/json' \
+  -d '{"peerMac":"DC:B4:D9:9C:48:EC"}'
 ```
 
 ### Clear peer MAC (enable auto-discovery)
@@ -110,52 +108,15 @@ curl -X PUT $GATE/config/mac \
   -d '{"peerMac":""}'
 ```
 
-### Change gate role
-```sh
-curl -X PUT $GATE/config/mac \
-  -H 'Content-Type: application/json' \
-  -d '{"role":"finish"}'
-```
-
-### Update device label
-```sh
-curl -X PUT $GATE/config/mac \
-  -H 'Content-Type: application/json' \
-  -d '{"deviceLabel":"Start Gate - Main Track"}'
-```
-
-### Update all three at once
-```sh
-curl -X PUT $GATE/config/mac \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "peerMac":"0c:4e:a0:66:a4:14",
-    "role":"finish",
-    "deviceLabel":"Finish Gate"
-  }'
-```
-
 ## Sensor Calibration
 
-### Update trigger delta
+Guided calibration runs via the serial `calibrate` command (no HTTP endpoint); the boot sequence also auto-seeds `triggerDelta` from idle noise.
+
+### Set trigger delta manually
 ```sh
 curl -X PUT $GATE/config/time \
   -H 'Content-Type: application/json' \
   -d '{"triggerDelta": 0.25}'
-```
-
-### Reduce sensitivity
-```sh
-curl -X PUT $GATE/config/time \
-  -H 'Content-Type: application/json' \
-  -d '{"triggerDelta": 0.40}'
-```
-
-### Reset to default
-```sh
-curl -X PUT $GATE/config/time \
-  -H 'Content-Type: application/json' \
-  -d '{"triggerDelta": 0.30}'
 ```
 
 ## Rider Management
@@ -165,186 +126,79 @@ curl -X PUT $GATE/config/time \
 curl $GATE/riders | jq .
 ```
 
-Output:
-```json
-[
-  {
-    "riderId": "rider-tag-001",
-    "displayName": "Dave Wilson",
-    "tagId": "tag-001"
-  },
-  {
-    "riderId": "rider-tag-002",
-    "displayName": "Sarah Chen",
-    "tagId": "tag-002"
-  }
-]
-```
-
-### Count riders
-```sh
-curl -s $GATE/riders | jq 'length'
-# Output: 2
-```
-
-### Register a single rider
+### Register or update a rider
 ```sh
 curl -X POST $GATE/riders \
   -H 'Content-Type: application/json' \
-  -d '{"tagId":"tag-001","displayName":"Dave Wilson"}'
-```
-
-### Register multiple riders
-```sh
-for i in {1..5}; do
-  curl -X POST $GATE/riders \
-    -H 'Content-Type: application/json' \
-    -d "{\"tagId\":\"tag-$(printf %03d $i)\",\"displayName\":\"Rider $i\"}"
-done
-```
-
-### Update rider display name
-```sh
-curl -X POST $GATE/riders \
-  -H 'Content-Type: application/json' \
-  -d '{"tagId":"tag-001","displayName":"Dave W. (Updated)"}'
-```
-
-### Get a specific rider
-```sh
-curl -s $GATE/riders | jq '.[] | select(.tagId == "tag-001")'
+  -d '{"tagId":"04AB12CD","displayName":"Dave Wilson"}'
 ```
 
 ### Delete a rider
 ```sh
-curl -X DELETE $GATE/riders \
-  -H 'Content-Type: application/json' \
-  -d '{"tagId":"tag-001"}'
+curl -X DELETE "$GATE/riders?tagId=04AB12CD"
 ```
 
 ### Delete all riders
 ```sh
 curl -s $GATE/riders | jq -r '.[].tagId' | while read tagId; do
-  curl -X DELETE $GATE/riders \
-    -H 'Content-Type: application/json' \
-    -d "{\"tagId\":\"$tagId\"}"
+  curl -X DELETE "$GATE/riders?tagId=$tagId"
 done
 ```
 
-## Diagnostics
+## Runs & Results
 
-### Send test ping to peer
+### Start a run for a registered rider (start gate)
 ```sh
-curl -X POST $GATE/ping
-```
-
-Response (success):
-```json
-{"ok": true}
-```
-
-Response (error):
-```json
-{"error": "Peer MAC not configured"}
-```
-
-### Monitor ESP-Now RTT in real time
-```sh
-while true; do
-  clear
-  echo "=== ESP-Now Status ==="
-  curl -s $GATE/status | jq '.espNow'
-  sleep 1
-done
-```
-
-### Watch for peer connection
-```sh
-watch -n 1 "curl -s $GATE/status | jq '.espNow.connected'"
-```
-
-## Advanced Workflows
-
-### Bootstrap a gate from scratch
-
-1. **Set device label**
-   ```sh
-   curl -X PUT $GATE/config/mac \
-     -H 'Content-Type: application/json' \
-     -d '{"deviceLabel":"My Gate"}'
-   ```
-
-2. **Update Wi-Fi settings**
-   ```sh
-   curl -X PUT $GATE/config/wifi \
-     -H 'Content-Type: application/json' \
-     -d '{
-       "apSsid": "MyGate",
-       "apPassword": "secure123",
-       "wifiChannel": 6
-     }'
-   ```
-
-3. **Register initial riders**
-   ```sh
-   curl -X POST $GATE/riders \
-     -H 'Content-Type: application/json' \
-     -d '{"tagId":"rider-001","displayName":"Alice"}'
-   ```
-
-4. **Verify setup**
-   ```sh
-   curl -s $GATE/config | jq '{deviceLabel, apSsid, wifiChannel}'
-   curl -s $GATE/riders | jq 'length'
-   ```
-
-### Pair two gates manually
-
-**On Start Gate** (note MAC):
-```sh
-curl -s $GATE/status | jq -r '.mac'
-# Output: dc:b4:d9:9c:48:ec
-```
-
-**On Finish Gate** (set Start Gate as peer):
-```sh
-START_MAC="dc:b4:d9:9c:48:ec"
-curl -X PUT $GATE/config/mac \
+curl -X POST $GATE/results \
   -H 'Content-Type: application/json' \
-  -d "{\"peerMac\":\"$START_MAC\"}"
+  -d '{"tagId":"04AB12CD"}'
 ```
 
-**Verify connection** (on Finish Gate):
+### Cancel the active run
 ```sh
-curl -s $GATE/status | jq '.espNow.connected'
-# Should output: true
+curl -X POST $GATE/results/stop
 ```
 
-### Calibrate sensors interactively
-
+### Recent results (live + persisted)
 ```sh
-#!/bin/bash
-# Semi-interactive sensor calibration
+curl "$GATE/results?limit=10" | jq .
+```
 
-while true; do
-  echo ""
-  echo "Current trigger delta:"
-  curl -s $GATE/config | jq '.triggerDelta'
-  echo ""
-  echo "Enter new trigger delta (or press Enter to skip):"
-  read newTriggerDelta
+### Delete a run
+```sh
+curl -X DELETE $GATE/results \
+  -H 'Content-Type: application/json' \
+  -d '{"runId":"<runId from /api/results>"}'
+```
 
-  if [ -n "$newTriggerDelta" ]; then
-    curl -X PUT $GATE/config/time \
-      -H 'Content-Type: application/json' \
-      -d "{\"triggerDelta\":$newTriggerDelta}"
-    echo "Updated trigger delta to $newTriggerDelta"
-  fi
+## Peer Diagnostics
 
-  echo "Continue? (y/n)"
-  read continue
-  [ "$continue" != "y" ] && break
-done
+### Full ESP-Now link report
+```sh
+curl -X POST $GATE/peer/test | jq .
+```
+
+### Request a clock sync
+```sh
+curl -X POST $GATE/peer/sync
+```
+
+### Watch peer reachability
+```sh
+watch -n 1 "curl -s $GATE/status | jq '.espNow.reachable'"
+```
+
+## Storage
+
+### Filesystem usage
+```sh
+curl $GATE/storage | jq .
+```
+
+### List sessions and download a session's runs
+```sh
+curl $GATE/sessions | jq .
+curl "$GATE/sessions/file?num=3&file=runs.jsonl"
 ```
 
 ## Error Handling
@@ -353,38 +207,20 @@ done
 ```sh
 curl -X PUT $GATE/config/wifi \
   -H 'Content-Type: application/json' \
-  -d '{"apPassword":"short"}' \
-  | jq '.error'
-# Output: "apPassword must be empty or >=8 chars"
+  -d '{"apPassword":"short"}' | jq '.error'
+# "apPassword must be empty or >=8 chars"
 ```
 
 ### Check HTTP status code
 ```sh
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+curl -s -o /dev/null -w "%{http_code}" \
   -X PUT $GATE/config/time \
   -H 'Content-Type: application/json' \
-  -d '{"triggerDelta":0}')
-
-if [ "$HTTP_CODE" -eq 400 ]; then
-  echo "Validation error"
-fi
+  -d '{"triggerDelta":0}'
+# 400
 ```
-
-### Retry on failure
-```sh
-curl -X POST $GATE/ping --retry 3 --retry-delay 1
-```
-
-## Tips
-
-- Use `jq` for readable output: `curl ... | jq .`
-- Use `jq` for filtering: `jq '.espNow.connected'`
-- Use `-s` for silent mode: `curl -s $GATE/status`
-- Use `-w "%{http_code}"` to capture status codes
-- Save responses: `curl ... > response.json`
-- Use `watch` for live monitoring: `watch -n 1 "curl ..."`
 
 ## See Also
 
-- [API.md](API.md) — Full API reference
-- [openapi.yaml](openapi.yaml) — OpenAPI spec (use with Swagger UI, Redoc, etc.)
+- [API.md](API.md) — Full API reference and route table
+- [openapi.yaml](openapi.yaml) — OpenAPI spec (Swagger UI, Redoc, etc.)

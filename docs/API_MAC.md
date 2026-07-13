@@ -1,6 +1,6 @@
 # PUT /api/config/mac
 
-Update peer MAC address, gate role, and device label. Changes take effect immediately; ESP-Now peer is re-registered.
+Update the gate number and/or peer MAC address. Role, device ID, device label, and AP SSID are all **derived from the gate number** — they cannot be set directly. Saving this config **reboots the device** so the new identity takes effect everywhere (AP SSID, AP IP, ESP-Now).
 
 ## Request
 
@@ -9,9 +9,8 @@ PUT /api/config/mac
 Content-Type: application/json
 
 {
-  "peerMac": "0c:4e:a0:66:a4:14",
-  "role": "start",
-  "deviceLabel": "Start Gate"
+  "gateNumber": 12,
+  "peerMac": "DC:B4:D9:9C:48:EC"
 }
 ```
 
@@ -19,132 +18,68 @@ Content-Type: application/json
 
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
-| `peerMac` | string | No | AA:BB:CC:DD:EE:FF format or empty string |
-| `role` | string | No | `start`, `finish`, or `intermediate` |
-| `deviceLabel` | string | No | 1–48 characters |
+| `gateNumber` | number | No | 1–254. 1 = start gate, 12 = finish gate, anything else = intermediate |
+| `peerMac` | string | No | `AA:BB:CC:DD:EE:FF` format (17 chars) or empty string (= auto-discover) |
+
+Omitted fields are left unchanged. Even if only `peerMac` is sent, deviceId/role/label are re-derived from the current gate number.
 
 ## Response (Success)
 
 ```json
 {
-  "ok": true
+  "ok": true,
+  "rebooting": true
 }
 ```
+
+The device reboots shortly after responding.
 
 ## Response (Error)
 
 ```json
 {
-  "error": "peerMac must be empty or AA:BB:CC:DD:EE:FF format"
+  "error": "peerMac must be AA:BB:CC:DD:EE:FF format"
 }
 ```
 
-## Validation Rules
+or
 
-- `peerMac`: Must be exactly 17 characters in `AA:BB:CC:DD:EE:FF` format, or empty (empty = auto-discover from start gate Ping)
-- `role`: Must be `start`, `finish`, or `intermediate` (case-insensitive)
-- `deviceLabel`: Optional; must be ≤48 characters if provided
+```json
+{
+  "error": "gateNumber must be 1-254"
+}
+```
 
-## Side Effects
+## Derived Values
 
-1. Configuration saved to NVS
-2. If `peerMac` is valid (17 chars), peer is immediately registered with ESP-Now
-3. If `peerMac` is empty, device waits for start gate to send a Ping (which triggers auto-discovery)
+| gateNumber | role | deviceId | deviceLabel |
+|------------|------|----------|-------------|
+| 1 | `start` | `Gate-Start-<mac>` | `Gate Start` |
+| 12 | `finish` | `Gate-Finish-<mac>` | `Gate Finish` |
+| other (2–11, 13–254) | `intermediate` | `Gate-<n>-<mac>` | `Gate <n>` |
+
+The AP IP also follows the gate number: `192.168.4.<gateNumber>`.
+
+## Auto-discovery (recommended)
+
+Leave `peerMac` empty on non-start gates. The start gate broadcasts an ESP-Now Ping every 10 seconds; other gates auto-adopt the start gate's MAC (and Wi-Fi channel) on the first Ping they hear and persist it. The start gate likewise auto-registers any responding peer.
 
 ## Serial Equivalent
 
-None (role and MAC are core device properties; serial is primarily for debugging).
+```
+> api config/mac {"gateNumber":12,"peerMac":""}
+```
 
 ## Examples
 
-### curl — Set peer MAC
-
 ```sh
+# Make this device the finish gate (auto-discover peer), reboots
 curl -X PUT http://192.168.4.1/api/config/mac \
   -H 'Content-Type: application/json' \
-  -d '{"peerMac":"dc:b4:d9:9c:48:ec"}'
-```
+  -d '{"gateNumber":12,"peerMac":""}'
 
-### curl — Change role to finish
-
-```sh
+# Pin the peer MAC explicitly
 curl -X PUT http://192.168.4.1/api/config/mac \
   -H 'Content-Type: application/json' \
-  -d '{"role":"finish"}'
+  -d '{"peerMac":"DC:B4:D9:9C:48:EC"}'
 ```
-
-### curl — Clear peer MAC (enable auto-discovery)
-
-```sh
-curl -X PUT http://192.168.4.1/api/config/mac \
-  -H 'Content-Type: application/json' \
-  -d '{"peerMac":""}'
-```
-
-### curl — Update all three fields
-
-```sh
-curl -X PUT http://192.168.4.1/api/config/mac \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "peerMac":"0c:4e:a0:66:a4:14",
-    "role":"finish",
-    "deviceLabel":"Finish Gate"
-  }'
-```
-
-## Error Examples
-
-### Invalid MAC format
-
-```sh
-curl -X PUT http://192.168.4.1/api/config/mac \
-  -H 'Content-Type: application/json' \
-  -d '{"peerMac":"0c:4e:a0:66:a4"}'
-```
-
-Response:
-```json
-{
-  "error": "peerMac must be empty or AA:BB:CC:DD:EE:FF format"
-}
-```
-
-### Invalid role
-
-```json
-{
-  "error": "Invalid role (use start, finish, or intermediate)"
-}
-```
-
-## Workflows
-
-### Pair two gates manually
-
-**On Start Gate**:
-1. Check its MAC (from home page or `GET /api/status`)
-2. Note the MAC: `dc:b4:d9:9c:48:ec`
-
-**On Finish Gate**:
-1. Set Start Gate's MAC as peer:
-   ```sh
-   curl -X PUT http://192.168.4.1/api/config/mac \
-     -H 'Content-Type: application/json' \
-     -d '{"peerMac":"dc:b4:d9:9c:48:ec"}'
-   ```
-2. Verify connection: `GET /api/status` → `espNow.connected: true`
-
-### Auto-discovery (recommended)
-
-**On Finish Gate**:
-1. Leave `peerMac` empty (or already empty)
-2. Start Gate will send Ping every 30 seconds
-3. Finish Gate auto-discovers Start Gate's MAC on first Ping
-4. No manual configuration needed
-
-## Notes
-
-- **Role is compile-time**: In production, role is baked into firmware; this endpoint is for testing only
-- **Auto-discovery is recommended**: Leave `peerMac` empty on non-start gates; the start gate will discover them automatically
-- **Intermediate gates**: Support for multi-checkpoint timing (future feature); currently same behavior as finish gate

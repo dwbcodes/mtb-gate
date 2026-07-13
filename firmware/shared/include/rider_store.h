@@ -8,6 +8,12 @@ struct RiderEntry {
   String tagId;
 };
 
+// Persistent, NVS-backed rider roster (namespace "riders"), keyed by
+// tagId. Entries are stored as indexed keys ("r<i>_id"/"r<i>_name"/"r<i>_tag")
+// rather than one blob so a single save()/remove() only rewrites what
+// changed. On the finish/intermediate gates this store is populated purely
+// by ESP-Now RiderSync broadcasts from the start gate (see onEspNowRecv()
+// in main.cpp), never edited locally.
 class RiderStore {
 public:
   static constexpr size_t kCapacity = 32;

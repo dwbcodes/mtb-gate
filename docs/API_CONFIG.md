@@ -1,6 +1,6 @@
 # GET /api/config
 
-Returns the full device configuration. Passwords are redacted as `"***"` for security.
+Returns the full device configuration. Passwords are redacted as `"***"`.
 
 ## Request
 
@@ -14,19 +14,19 @@ No body required.
 
 ```json
 {
-  "deviceId": "gate-1234",
-  "deviceLabel": "Start Gate",
+  "deviceId": "Gate-Start-a1b2c3d4e5f6",
+  "deviceLabel": "Gate Start",
+  "gateNumber": 1,
   "role": "start",
-  "apSsid": "MTBGate-gate-1234",
   "apPassword": "***",
   "staSsid": "MyNetwork",
   "staPassword": "***",
-  "startThreshold": 0.85,
-  "line2Threshold": 0.85,
-  "finishThreshold": 0.85,
+  "startThreshold": 2.0,
+  "finishThreshold": 2.0,
+  "line2Threshold": 2.0,
   "triggerDelta": 0.30,
   "wifiChannel": 6,
-  "peerMac": "0c:4e:a0:66:a4:14"
+  "peerMac": "0C:4E:A0:66:A4:14"
 }
 ```
 
@@ -34,72 +34,32 @@ No body required.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `deviceId` | string | Unique device ID (auto-generated, read-only) |
-| `deviceLabel` | string | User-friendly device name |
-| `role` | string | Gate role: `start`, `finish`, or `intermediate` |
-| `apSsid` | string | Access point SSID (must be 1-32 chars) |
-| `apPassword` | string | AP password (always returned as `***` for security) |
+| `deviceId` | string | `Gate-<#>-<mac>` — derived from `gateNumber` + eFuse MAC, read-only. Also the AP SSID |
+| `deviceLabel` | string | Derived from `gateNumber` (`Gate Start` / `Gate Finish` / `Gate <n>`) |
+| `gateNumber` | number | 1–254. **Source of truth**: role, deviceId, and label are all derived from it (1 = start, 12 = finish, else intermediate) |
+| `role` | string | `start`, `finish`, or `intermediate` (derived, read-only) |
+| `apPassword` | string | Always returned as `***` |
 | `staSsid` | string | Station network SSID to join (empty = don't connect) |
-| `staPassword` | string | Station password (always returned as `***`) |
-| `startThreshold` | number | Legacy stored absolute threshold for old backups/test clients; not used by current trigger logic |
-| `line2Threshold` | number | Legacy stored absolute threshold for old backups/test clients; not used by current trigger logic |
-| `finishThreshold` | number | Legacy stored absolute threshold for old backups/test clients; not used by current trigger logic |
-| `triggerDelta` | number | Active sensor trigger delta in volts above the rolling baseline |
-| `wifiChannel` | number | Wi-Fi channel (1–13) |
-| `peerMac` | string | Peer gate MAC address (AA:BB:CC:DD:EE:FF format, empty = auto-discover) |
+| `staPassword` | string | Always returned as `***` |
+| `startThreshold` / `line2Threshold` / `finishThreshold` | number | Legacy absolute thresholds kept for old backups/test clients; not used by the current trigger logic |
+| `triggerDelta` | number | Active sensor trigger delta in volts from the rolling baseline |
+| `wifiChannel` | number | Wi-Fi/ESP-Now channel (1–13) |
+| `peerMac` | string | Peer gate MAC (`AA:BB:CC:DD:EE:FF`, empty = auto-discover) |
 
-## Validation
-
-None — this is a read-only query.
+Note: the AP SSID is not in this payload because it is not independently configurable — it always equals `deviceId` (see `GET /api/status`).
 
 ## Security Note
 
-Real passwords are stored in NVS but never exposed via the API; only `***` is returned. To update passwords, use the individual config endpoints (`PUT /api/config/wifi`).
+Real passwords are stored in NVS but never exposed via the API. To update them use `PUT /api/config/wifi`. This also means a config backup downloaded from the API cannot restore passwords — see the restore flow in the device UI Reset page.
 
 ## Serial Equivalent
 
 ```
-> config
-{
-  "deviceId":"gate-1234",
-  "role":"start",
-  "apSsid":"MTBGate-gate-1234",
-  "apPassword":"***",
-  "staSsid":"MyNetwork",
-  "staPassword":"***",
-  "startThreshold":0.85,
-  "line2Threshold":0.85,
-  "finishThreshold":0.85,
-  "triggerDelta":0.30,
-  "wifiChannel":6,
-  "peerMac":"0c:4e:a0:66:a4:14"
-}
+> api config
 ```
 
-## Examples
-
-### curl
+## Example
 
 ```sh
 curl http://192.168.4.1/api/config | jq .
-```
-
-### Response example
-
-```json
-{
-  "deviceId": "gate-a1b2",
-  "deviceLabel": "Start Gate",
-  "role": "start",
-  "apSsid": "MTBGate-gate-a1b2",
-  "apPassword": "***",
-  "staSsid": "",
-  "staPassword": "***",
-  "startThreshold": 0.85,
-  "line2Threshold": 0.85,
-  "finishThreshold": 0.85,
-  "triggerDelta": 0.30,
-  "wifiChannel": 1,
-  "peerMac": ""
-}
 ```

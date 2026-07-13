@@ -11,9 +11,9 @@ Riders are registered to NFC tags (MiFare Classic, NTAG, or similar ISO14443A co
 #### Via Device UI (Recommended)
 
 1. **Connect to Gate Wi-Fi**
-   - SSID: `MTBGate-<device-id>` (e.g., `MTBGate-gate-3c0a`)
+   - SSID: the device ID, `Gate-<#>-<mac>` (e.g., `Gate-Start-a1b2c3d4e5f6`)
    - Password: `changeme123` (default)
-   - Open browser to `http://192.168.4.1/`
+   - Open browser to `http://192.168.4.1/` (start gate)
 
 2. **Navigate to Riders Tab**
    - Click the "Riders" tab in the navigation bar
@@ -54,8 +54,7 @@ curl -X POST http://192.168.4.1/api/riders \
 Response:
 ```json
 {
-  "ok": true,
-  "riderId": "rider-04AB12CD"
+  "ok": true
 }
 ```
 
@@ -64,12 +63,7 @@ Response:
 Connect to the device serial port (115200 baud) and use:
 
 ```
-riders.add 04AB12CD Dave Wilson
-```
-
-Response:
-```
-[RIDER] Added/updated: 04AB12CD -> Dave Wilson
+api riders/add {"tagId":"04AB12CD","displayName":"Dave Wilson"}
 ```
 
 ## Viewing Registered Riders
@@ -102,7 +96,7 @@ Response:
 
 ### Serial Console
 ```
-riders
+api riders
 ```
 
 ## Removing a Rider
@@ -120,23 +114,18 @@ curl -X DELETE http://192.168.4.1/api/riders \
 
 ### Serial Console
 ```
-riders.del 04AB12CD
-```
-
-Response:
-```
-[RIDER] Deleted: 04AB12CD
+api riders/delete {"tagId":"04AB12CD"}
 ```
 
 ## NFC Hardware Setup
 
 ### PN532 Reader Wiring (I2C Mode)
 
-**Default ESP32-C3 I2C Pins:**
-- **SDA (Data)**: GPIO 5
-- **SCL (Clock)**: GPIO 4
-- **IRQ**: GPIO 11 (interrupt, optional for polling)
-- **RESET**: GPIO 12
+**ESP32-C3 DevKit M1 pins** (see `firmware/shared/src/nfc_reader.cpp`):
+- **SDA (Data)**: GPIO 8
+- **SCL (Clock)**: GPIO 10
+- **IRQ**: GPIO 6 (assigned but not read — the driver polls over I2C)
+- **RESET**: GPIO 7
 
 **Wiring Diagram**:
 ```
@@ -144,11 +133,13 @@ PN532 Module     ESP32-C3
 ─────────────────────────
 VCC      ──────→ 3V3
 GND      ──────→ GND
-SDA      ──────→ GPIO 5
-SCL      ──────→ GPIO 4
-IRQ      ──────→ GPIO 11
-RESET    ──────→ GPIO 12
+SDA      ──────→ GPIO 8
+SCL      ──────→ GPIO 10
+IRQ      ──────→ GPIO 6
+RESET    ──────→ GPIO 7
 ```
+
+See [NFC_TROUBLESHOOTING.md](NFC_TROUBLESHOOTING.md) if the reader is not detected.
 
 ### Compatible NFC Cards
 
@@ -174,7 +165,7 @@ RESET    ──────→ GPIO 12
 
 1. **Check browser console**: Press F12, check for JavaScript errors
 2. **Reload page**: Refresh browser
-3. **Try API directly**: Use curl to test `/api/nfc/scan`
+3. **Try API directly**: `curl -X POST http://192.168.4.1/api/nfc/listen`, tap the card, then `curl http://192.168.4.1/api/nfc/tag`
 4. **Check server logs**: Watch serial output for HTTP errors
 
 ### Problem: Same rider registered multiple times

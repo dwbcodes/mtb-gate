@@ -1,3 +1,24 @@
+// MTB Gate unified firmware — one binary for every gate.
+//
+// Role is derived from the persisted gate number (1 = start, 12 = finish,
+// anything else = intermediate) and configured at runtime via the web UI
+// or serial; there is no per-role build. Responsibilities by role:
+//   - Start gate: NFC rider scan, countdown, run queue/state machine
+//     (handleStartGateLoop), all authoritative timestamps via millis(),
+//     rider-roster broadcasts, peer discovery pings, clock sync.
+//   - Finish/intermediate gates: pressure-sensor detection only
+//     (handleFinishGateLoop); a trigger is reported to the start gate over
+//     ESP-Now and the start gate stamps the time on receipt.
+// Every gate serves the embedded device UI (device_ui.h) and REST API on
+// its own AP (SSID = deviceId, IP = 192.168.4.<gateNumber>) and optional
+// station network. HTTP docs for each route live in docs/ and are embedded
+// alongside the UI. ESP-Now runs independently of Wi-Fi networking but
+// shares its channel; a channel change is pushed to peers via Ping.
+//
+// Hardware (ESP32-C3 DevKit M1): pressure sensor ADC on GPIO4, buzzer via
+// LEDC PWM on GPIO5, PN532 NFC on I2C SDA=GPIO8/SCL=GPIO10. I2C traffic
+// corrupts C3 ADC reads, so NFC polling is suspended during calibration
+// and active runs (see the nfcSafe gate in loop()).
 #include <Arduino.h>
 #include <HardwareSerial.h>
 #include <Wire.h>

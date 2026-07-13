@@ -1,9 +1,7 @@
 #include "nfc_reader.h"
 
-// PN532 on I2C bus
-// I2C pins: SDA=GPIO8, SCL=GPIO10
+// PN532 on I2C bus (ESP32-C3 DevKit M1): SDA=GPIO8, SCL=GPIO10.
 // GPIO11 = VDD_SPI on ESP32-C3 — must NOT be used.
-// SDA=GPIO8, SCL=GPIO10 (user wiring).
 // IRQ/RESET are set as GPIO modes in the PN532 constructor but never read
 // (i2c_dev polling is used). Use free GPIOs that don't conflict with I2C.
 #define PN532_IRQ   (6)
@@ -13,8 +11,6 @@
 void NfcReader::begin() {
   initialized_ = false;
 
-  // Initialize I2C bus with explicit pins
-  // ESP32-C3 DevKit M1: SDA=GPIO5, SCL=GPIO4
   Wire.begin(8, 10);  // SDA=GPIO8, SCL=GPIO10
   yield();
 

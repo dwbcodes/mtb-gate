@@ -1,3 +1,11 @@
+// `npm run embed:device-ui` (run automatically by `make build`/`make upload`):
+// minifies + gzips the device UI (apps/device-ui) and the API docs served
+// by the firmware, and writes them as PROGMEM byte arrays to
+// firmware/shared/include/device_ui.h. Editing any file listed in `assets`
+// has no effect on the device until this script and a firmware flash run.
+// The gzip is served as-is with Content-Encoding: gzip (main.cpp
+// sendCompressedAsset), so each asset must stay under the ~24 KB the C3's
+// WebServer can buffer comfortably and _len is a uint16_t (65535 max).
 import { gzipSync } from "node:zlib";
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";

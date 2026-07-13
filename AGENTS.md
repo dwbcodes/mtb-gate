@@ -1,6 +1,28 @@
 # AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) and other AI agents when working with code in this repository. It is imported by `CLAUDE.md`, so its content is always in agent context — treat it as the canonical statement of how the system works. When a code change invalidates anything here, update this file in the same change.
+
+## Required Context — Ground Truths
+
+These facts are frequently gotten wrong by stale docs and training priors. Trust these (and the code) over any other document:
+
+- **Unified firmware, runtime configuration.** One PlatformIO environment (`gate`) is flashed identically to every device. There are NO `make build-start`/`build-finish` targets and no compile-time role or peer MAC. Role is derived from the **gate number** (1 = start, 12 = finish, anything else = intermediate), set via the web UI / `PUT /api/config/mac`, persisted to NVS; changing it reboots the device.
+- **Identity**: deviceId = `Gate-<#>-<mac>` from gate number + eFuse MAC (gate 1 renders as `Gate-Start-<mac>`, gate 12 as `Gate-Finish-<mac>`). The AP SSID **always equals deviceId** (never `MTBGate-*`) and the AP IP is `192.168.4.<gateNumber>`. Default AP password: `changeme123`.
+- **Pins (ESP32-C3 DevKit M1)**: pressure sensor ADC = **GPIO4**; buzzer (LEDC PWM) = **GPIO5**; PN532 NFC I2C = **SDA GPIO8 / SCL GPIO10** (IRQ 6, RESET 7, both unused by the polling driver). GPIO11 is VDD_SPI — never use it. A physical line-2 sensor is **not wired yet**: `RunQueue::stampLine2()` exists but nothing calls it in firmware, so the launch metric is always null on hardware (the simulator does exercise it).
+- **Trigger logic**: the active path is baseline-relative — a trigger fires when the sensor reading deviates from a rolling baseline by more than `triggerDelta` volts in either direction, debounced over 3 samples. The `startThreshold`/`line2Threshold`/`finishThreshold` fields and the `SensorGate` class are legacy and not in the trigger path.
+- **Serial console** mirrors the API: `api status | api config | api config/wifi <json> | api config/mac <json> | api config/time <json> | api riders | api riders/add <json> | api riders/delete <json> | api runs | api storage | api ping`, plus `status | wifi | calibrate | adc | reboot | scan=<tagId>`.
+- **I2C vs ADC**: I2C traffic corrupts ESP32-C3 ADC reads — NFC polling is suspended during calibration and active runs, and `Wire.end()` is called at boot if no reader is detected.
+
+## Documentation Map
+
+**All documentation lives in `docs/`** — do not create new top-level `*.md` files (the only root docs are `README.md`, `AGENTS.md`, and `CLAUDE.md`). When behavior changes, update the matching doc in the same change.
+
+- `docs/README.md` — documentation index
+- `docs/API.md` — REST API reference with the complete route table; per-endpoint detail in `docs/API_*.md`; `docs/CURL_EXAMPLES.md` for recipes
+- `docs/openapi.yaml` — OpenAPI spec. `docs/openapi.json` is **generated from it**; edit the YAML, then regenerate: `python3 -c "import yaml, json; json.dump(yaml.safe_load(open('docs/openapi.yaml')), open('docs/openapi.json','w'), indent=2)"`
+- `docs/RIDER_REGISTRATION.md`, `docs/NFC_TROUBLESHOOTING.md`, `docs/BUZZER.md` — user/hardware guides; `docs/parts/` — datasheets
+- **Embedded docs**: `docs/API*.md`, `docs/CURL_EXAMPLES.md`, and `docs/openapi.json` are gzipped into the firmware image by `scripts/embed-device-ui.mjs` (run automatically by `make build`/`make upload`) and served by the gate under `/docs/...` — keep them lean; a doc edit only reaches devices after re-embed + flash
+- `tests/device-ui-static.test.ts` asserts which doc paths the device UI links to — update it if embedded doc filenames change
 
 ## Project Overview
 
@@ -51,7 +73,9 @@ The monorepo uses npm workspaces in `/packages`, `/services`, and `/apps`:
 - **packages/contracts**: TypeScript wire protocol types and domain helpers shared across device and API layers
 - **packages/simulator**: CLI practice-session simulator for testing overlapping runs offline
 - **services/api**: Node-based dev server for testing cloud sync endpoint; runs on port 8787 in dev
-- **apps/device-ui**: Captive portal static UI served by start gate (configuration, live countdown, results display)
+- **services/infra**: AWS CDK entrypoint scaffold (dependency-free design placeholder for the API + DynamoDB single-table stack)
+- **apps/device-ui**: Captive portal static UI embedded into and served by the gate firmware (configuration, live countdown, results display)
+- **apps/cloud-results**: Static cloud day-results UI (queries the `services/api` results endpoint)
 - **firmware/**: PlatformIO-managed ESP32-C3 firmware; uses shared embedded code in `firmware/shared/`
 
 ## Building and Testing
@@ -111,10 +135,10 @@ Default USB_MATCH regex: `Espressif|USB JTAG|CDC ACM`; override with `make attac
 3. **NFC Rider Identification**: Riders registered on-device via NFC tap, stored in `rider_store.h` (32-entry NVS-backed)
 4. **Countdown & Timing**: Start gate owns all timestamps via `millis()`, coordinates countdown (100ms resolution), and stamps three timing metrics:
    - Reaction: GO → Line 1 sensor
-   - Launch: Line 1 → Line 2 sensor (new dual-sensor support)
+   - Launch: Line 1 → Line 2 sensor (line 2 hardware not wired yet — null on device, exercised by the simulator)
    - Course: Line 1 → Finish gate signal (via ESP-Now)
-5. **ESP-Now Inter-Gate Communication**: Finish gate sends finish events to start gate via low-latency messages (independent of Wi-Fi; supports distances up to ~250m)
-6. **Sensor Abstraction**: Pressure sensors (MPXV7002DP) abstracted in `sensor_gate.h` for mocking during dev; sensor on start gate GPIO0, bidirectional trigger detection (handles both positive and negative pressure signals)
+5. **ESP-Now Inter-Gate Communication**: Finish gate sends finish events to start gate via low-latency messages (independent of Wi-Fi; supports distances up to ~250m). Also carries peer auto-discovery pings, channel adoption, clock sync, rider-roster sync, and remote calibration commands
+6. **Sensor Detection**: Pressure sensor (MPXV7002DP) on GPIO4; baseline-relative bidirectional trigger (deviation beyond `triggerDelta` in either direction, 3-sample debounce) with ADC-saturation handling. `triggerDelta` is seeded by a boot-time idle-noise auto-calibration, refined by the guided serial `calibrate` command, or set directly via `PUT /api/config/time`
 7. **Offline Ingest**: Runs captured locally; payloads idempotent and uploadable to AWS when network available
 8. **Wi-Fi** (Configuration & Cloud Sync): Each device:
    - AP SSID always equals the deviceId (`Gate-<#>-<mac>`); not user-configurable
@@ -125,11 +149,13 @@ Default USB_MATCH regex: `Espressif|USB JTAG|CDC ACM`; override with `make attac
 
 ### Firmware Abstractions
 
-- **gate_config.h/cpp**: Persistent NVS storage for AP/station password, thresholds (line1, line2, finish), Wi-Fi channel, gate number, and peer MAC. DeviceId = `Gate-<#>-<mac>` computed from gate number + eFuse MAC; AP SSID always equals deviceId
-- **run_queue.h**: Queue for overlapping runs with deterministic ID generation; supports stampLine2() for dual-sensor timing
-- **rider_store.h/cpp**: Persistent NVS rider registration (32-entry max), keyed by tagId
-- **nfc_reader.h/cpp**: NFC tag reader abstraction (mock in dev, real PN532 I2C in production)
-- **sensor_gate.h**: Sensor read abstraction; mock vs. real sensors can be swapped
+- **gate_config.h/cpp**: Persistent NVS storage for AP/station password, legacy thresholds, `triggerDelta`, Wi-Fi channel, gate number, and peer MAC. Gate number is the source of truth: role, deviceId (`Gate-<#>-<mac>`), and label are derived from it on every load; AP SSID always equals deviceId
+- **run_queue.h/cpp**: Fixed 8-slot queue for overlapping runs; `updateStatus()` stamps the timestamp matching each status transition; `stampLine2()` for dual-sensor timing (not yet wired to hardware)
+- **rider_store.h/cpp**: Persistent NVS rider registration (32-entry max), keyed by tagId; synced start→peers via ESP-Now broadcasts
+- **nfc_reader.h/cpp**: PN532 I2C reader with NACK-probe before init (fails fast without hardware) and listen-window polling
+- **event_store.h/cpp**: Offline-first LittleFS persistence — per-boot session directories with `events.jsonl`/`runs.jsonl`/`manifest.json`/`sync.json`, crash-safe NVS-backed event sequence, auto-pruning at 80% full
+- **gate_log.h/cpp**: Serial logging prefixed with deviceId + serial console input
+- **sensor_gate.h**: Legacy absolute-threshold comparator; NOT the active trigger path (see Ground Truths)
 
 ### Hardware Parts
 
@@ -190,9 +216,11 @@ make devices                    # List serial ports
 ```
 
 Serial commands (type in monitor):
-- `status`: Print build role and current config
+- `status`: Print device identity and current config
 - `wifi`: Show Wi-Fi status
 - `scan=<tagId>`: Inject a tag (for testing listen mode or starting a run)
+- `calibrate` / `adc` / `reboot`: sensor calibration, ADC pin dump, restart
+- `api <route> [<json>]`: full serial mirror of the REST API (see Ground Truths)
 
 ### Device Configuration
 
@@ -207,7 +235,7 @@ After flashing:
 - **Unified Firmware**: Single PlatformIO app flashed identically to both devices; role and peer MAC configured at runtime via web UI and persisted to NVS
 - **Three Timing Metrics**: All timestamps use start gate's `millis()`. Finish gate is a pure detector; it sends finish event, start gate stamps the time on ESP-Now receipt
 - **ESP-Now Messaging**: Gates communicate finish events peer-to-peer; operates independently from router-backed Wi-Fi networking; peer MAC set via web UI
-- **Dual Sensors on Start Gate**: Line 1 (pin 2) and Line 2 (pin 3); each with 500ms debounce; stampLine2() updates run record without changing status
+- **Line 2 / Dual-Sensor Support**: `RunQueue::stampLine2()` updates the run record without changing status, and the contracts/simulator model launch timing end-to-end — but no physical line-2 sensor is wired in firmware yet, so nothing calls stampLine2() on device
 - **NFC Registration**: Riders stored on-device with deterministic riderId generation (`rider-<tagId>`); 32-entry max capacity
 - **Idempotent Cloud Sync**: Offline runs captured with `runId`; HTTP POST to Lambda uses `runId` for deduplication on device side; cloud handles final idempotency
 - **REST over MQTT**: Simple HTTP POST chosen over MQTT because: (1) one-shot, unidirectional data flow (device → cloud only), (2) no multi-subscriber pattern, (3) avoids broker infrastructure

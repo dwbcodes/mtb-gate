@@ -1,3 +1,6 @@
+// Cloud day-results page: queries the services/api results endpoint
+// (dev: http://127.0.0.1:8787) by date/rider and renders attempts,
+// aggregate metrics, and per-rider summaries via the src/ modules.
 import { loadAttempts } from "./src/data-client.js";
 import { buildMetrics, buildRiderSummary } from "./src/metrics.js";
 import { escapeHtml, renderAttempt, renderMetrics, renderRiderCard } from "./src/renderers.js";

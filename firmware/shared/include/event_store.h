@@ -5,6 +5,14 @@
 
 class RiderStore;  // forward declaration
 
+// Offline-first persistence on LittleFS. Each boot opens a new
+// /events/session-NNN/ directory holding events.jsonl (append-only event
+// log), runs.jsonl (one summary per completed run), manifest.json, and
+// sync.json (cloud-upload status, written as "pending" until a future
+// uploader marks it). Event IDs ("gate-<mac4>-<seq>") use an NVS-backed
+// sequence counter persisted every SEQ_PERSIST_INTERVAL events and bumped
+// by that interval on boot, so IDs stay unique across crashes at the cost
+// of small gaps. Old sessions are pruned when the FS passes 80% full.
 class EventStore {
 public:
   bool begin(const String& deviceId, uint8_t gateNumber, const String& role);

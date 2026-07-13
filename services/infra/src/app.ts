@@ -1,3 +1,7 @@
+// Placeholder for the future AWS CDK app. Deliberately dependency-free:
+// it only names the intended stack shape (API + DynamoDB single table
+// with by-date and by-rider-date GSIs) so the design is recorded and
+// testable before CDK is installed. Run directly to print the shape.
 export interface StackShape {
   apiName: string;
   tableName: string;

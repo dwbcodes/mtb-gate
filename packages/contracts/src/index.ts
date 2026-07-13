@@ -1,3 +1,10 @@
+// Wire contracts shared across the device firmware model, simulator,
+// services/api, and the cloud-results UI. Anything that crosses a
+// package/service/firmware boundary belongs here (see "API-first
+// development" in AGENTS.md). Timestamps are ISO-8601 strings on this
+// side of the wire; the firmware works in millis() and converts on
+// upload.
+
 export type RiderId = string;
 export type TagId = string;
 export type RunId = string;
@@ -106,6 +113,10 @@ export function toSessionDate(isoTimestamp: string): string {
   return isoTimestamp.slice(0, 10);
 }
 
+// Metric definitions (mirrors the firmware's logRunSummary()):
+//   reaction = GO -> line1, launch = line1 -> line2,
+//   course = line1 -> finish, total = GO -> finish.
+// Any metric is null until both of its timestamps exist.
 export function computeMetrics(attempt: Pick<AttemptRecord, "goAt" | "startTriggeredAt" | "line2TriggeredAt" | "finishTriggeredAt">): AttemptMetrics {
   const reactionMs = diffMs(attempt.goAt, attempt.startTriggeredAt);
   const launchMs = diffMs(attempt.startTriggeredAt, attempt.line2TriggeredAt);

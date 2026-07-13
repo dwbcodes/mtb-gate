@@ -1,3 +1,9 @@
+// Device UI single-page app, served by the gate firmware itself (embedded
+// via scripts/embed-device-ui.mjs — changes here require re-embed + flash).
+// Talks only to the firmware's /api/* routes; keep it dependency-free and
+// small, since it ships gzipped inside the firmware image. Non-start gates
+// get a reduced nav (see pageRequiresStart/applyRoleUi).
+
 // PAGE NAVIGATION (hash-based)
 const PAGES = ['results', 'riders', 'files', 'config-network', 'config-gate', 'config-reset', 'docs', 'peer-tools'];
 let currentRole = null;

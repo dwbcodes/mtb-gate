@@ -1,125 +1,49 @@
-# MTB Gate API Documentation
+# MTB Gate Documentation
 
-Complete REST API documentation for MTB Gate timing system.
+All project documentation lives in this directory. Architecture, build commands, and agent instructions live in [AGENTS.md](../AGENTS.md) at the repo root.
 
-## Quick Links
+## Device REST API
 
-### API Overview
-- **[API.md](API.md)** — Main API reference, base URL, response format, status codes
+- **[API.md](API.md)** — Full API reference: base URL, conventions, and the complete route table
+- **[openapi.yaml](openapi.yaml)** / **[openapi.json](openapi.json)** — OpenAPI 3.0 spec (Swagger UI / Redoc / codegen)
+- **[CURL_EXAMPLES.md](CURL_EXAMPLES.md)** — Copy-paste curl recipes
 
-### OpenAPI Specification
-- **[openapi.yaml](openapi.yaml)** — OpenAPI 3.0 specification (YAML format)
-  - Use with Swagger UI, Redoc, or other OpenAPI tools
-  - Includes all endpoints, schemas, validation rules
-  - Supports code generation (e.g., `openapi-generator`)
+Per-endpoint detail:
 
-### Endpoint Documentation
+- **[API_STATUS.md](API_STATUS.md)** — `GET /api/status`
+- **[API_CONFIG.md](API_CONFIG.md)** — `GET /api/config`
+- **[API_WIFI.md](API_WIFI.md)** — `PUT /api/config/wifi`
+- **[API_MAC.md](API_MAC.md)** — `PUT /api/config/mac` (gate number + peer MAC)
+- **[API_TIME.md](API_TIME.md)** — `PUT /api/config/time` (trigger calibration)
+- **[API_RIDERS.md](API_RIDERS.md)** — `GET/POST/DELETE /api/riders`
 
-#### Device Status & Configuration
-- **[API_STATUS.md](API_STATUS.md)** — `GET /api/status` — Device status (uptime, MAC, ESP-Now state)
-- **[API_CONFIG.md](API_CONFIG.md)** — `GET /api/config` — Full configuration (passwords redacted)
-- **[API_WIFI.md](API_WIFI.md)** — `PUT /api/config/wifi` — Update Wi-Fi settings
-- **[API_MAC.md](API_MAC.md)** — `PUT /api/config/mac` — Update peer MAC and role
-- **[API_TIME.md](API_TIME.md)** — `PUT /api/config/time` — Update sensor trigger calibration
+These API docs (plus `openapi.json`) are embedded into the firmware by `npm run embed:device-ui` and served by the gate itself under `/docs/...` — keep them accurate and small.
 
-#### Rider Management
-- **[API_RIDERS.md](API_RIDERS.md)** — GET/POST/DELETE `/api/riders` — Manage rider roster
+## Guides & Hardware
 
-#### Diagnostics
-- **[API.md](API.md#post-apipping)** — `POST /api/ping` — Send test ping to peer
+- **[RIDER_REGISTRATION.md](RIDER_REGISTRATION.md)** — Registering riders via NFC, API, or serial
+- **[NFC_TROUBLESHOOTING.md](NFC_TROUBLESHOOTING.md)** — PN532 wiring and diagnosis
+- **[BUZZER.md](BUZZER.md)** — Buzzer wiring and countdown audio pattern
+- **[parts/](parts/README.md)** — Component datasheets (MPXV7002 pressure sensor, PN532 NFC)
 
-## Base URL
+## Quick Reference
 
-```
-http://192.168.4.1/api
-```
+### Connecting to a gate
 
-Connect to the gate's Wi-Fi access point (default SSID: `MTBGate-<device-id>`, password: `changeme123`).
+1. Join the gate's AP: SSID = device ID (`Gate-<#>-<mac>`, e.g. `Gate-Start-a1b2c3d4e5f6`), default password `changeme123`
+2. Open `http://192.168.4.<gateNumber>/` (start gate: `http://192.168.4.1/`)
 
-## Content-Type
-
-All requests and responses use `application/json; charset=utf-8`.
-
-## Status Codes
-
-| Code | Meaning |
-|------|---------|
-| 200 | Success |
-| 400 | Bad request (validation error) |
-| 404 | Not found |
-| 405 | Method not allowed |
-
-## Authentication
-
-None required (gates are in a closed Wi-Fi network).
-
-## Examples
-
-### Check device status
-```sh
-curl http://192.168.4.1/api/status | jq .
-```
-
-### Update Wi-Fi settings
-```sh
-curl -X PUT http://192.168.4.1/api/config/wifi \
-  -H 'Content-Type: application/json' \
-  -d '{"apSsid":"MyGate","apPassword":"secure123"}'
-```
-
-### Register a rider
-```sh
-curl -X POST http://192.168.4.1/api/riders \
-  -H 'Content-Type: application/json' \
-  -d '{"tagId":"tag-001","displayName":"Dave Wilson"}'
-```
-
-### List all riders
-```sh
-curl http://192.168.4.1/api/riders | jq .
-```
-
-### Test ESP-Now link
-```sh
-curl -X POST http://192.168.4.1/api/ping
-```
-
-## Serial Mirror Commands
-
-For offline debugging or serial access, all API operations have serial equivalents:
+### Serial console (115200 baud)
 
 ```
-status              # Full device status (JSON)
-config              # Full configuration (JSON)
-riders              # List all riders (JSON)
-riders.add <id> <name>  # Register/update rider
-riders.del <id>     # Remove rider
-ping                # Send test ping to peer
-wifi                # Show Wi-Fi status
-help                # Show all commands
+api status | api config | api riders | api runs | api storage | api ping
+api config/wifi <json> | api config/time <json> | api config/mac <json>
+api riders/add <json>  | api riders/delete <json>
+status | wifi | calibrate | adc | reboot | scan=<tagId>
 ```
 
-Example:
-```
-Type on device serial monitor (115200 baud):
-> status
-{
-  "deviceId":"gate-1234",
-  "role":"start",
-  ...
-}
-```
+## Implementation Notes
 
-## Implementation Details
-
-- **Authentication**: None (closed network)
-- **Response envelope**: Direct JSON (no wrapper)
-- **Validation**: All inputs validated on device
-- **Persistence**: All changes saved to NVS (survives power cycles)
-- **Limits**: 32 riders max per device, all threshold ranges 0.00–2.00 V
-- **Passwords**: Never exposed via API (redacted as `***`)
-
-## See Also
-
-- [AGENTS.md](../AGENTS.md) — Project architecture and build commands
-- [CLAUDE.md](../CLAUDE.md) — Development instructions
+- **Authentication**: none (closed network); passwords never leave the device (redacted as `***`)
+- **Persistence**: config and riders in NVS; events/runs in LittleFS session directories
+- **Limits**: 32 riders, 8 queued runs, 50-entry reads on event/run endpoints
