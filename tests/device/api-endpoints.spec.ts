@@ -88,15 +88,6 @@ for (const port of getHarnessConfig().ports) {
       }
     });
 
-    // --- Calibrate ---
-
-    test("@api-endpoints POST /api/calibrate returns ok", async () => {
-      const res = await api.post("/api/calibrate");
-      expect(res.ok()).toBeTruthy();
-      const body = await res.json();
-      expect(body).toEqual(expect.objectContaining({ ok: true, message: expect.any(String) }));
-    });
-
     // --- NFC endpoints ---
 
     test("@api-endpoints GET /api/nfc/diagnostics returns shape", async () => {

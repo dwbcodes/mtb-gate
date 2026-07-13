@@ -53,7 +53,7 @@ Legacy fields `startThreshold`, `line2Threshold`, and `finishThreshold` are stil
 
 - **Trigger meaning**: a sensor is triggered when its analog reading is greater than `rolling baseline + triggerDelta`
 - **Baseline**: rolling average of recent sensor readings, frozen during countdown and active trigger windows
-- **Calibration**: use the device UI auto calibration flow to estimate a stable `triggerDelta`
+- **Calibration**: the device samples idle sensor noise on boot; adjust `triggerDelta` with this API when bench testing shows the default is too sensitive or not sensitive enough
 - **Typical values**: 0.05-0.30 V depending on sensor noise and tube response
 
 ## Serial Equivalent

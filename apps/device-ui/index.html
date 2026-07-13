@@ -53,7 +53,7 @@
 
           <section class="notice" id="roleNotice" hidden>
             <strong>This gate is managed by the Start Gate.</strong>
-            <span>Use this device for status, network setup, and calibration. Register riders and review run control on the Start Gate.</span>
+            <span>Use this device for status and network setup. Register riders and review run control on the Start Gate.</span>
           </section>
 
           <section class="card">
@@ -235,20 +235,6 @@
             <p id="peerMessage" style="font-size: 0.85em; margin-top: 8px; color: var(--accent);"></p>
           </section>
 
-          <section class="card">
-            <h2>Auto Calibration</h2>
-            <p style="color: var(--muted); font-size: 0.9em; margin-bottom: 12px;">
-              Current trigger delta: <strong id="currentDelta">--</strong>V above baseline
-            </p>
-            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-              <button class="btn-primary calibrate-btn" data-cal-target="all">Calibrate All Gates</button>
-              <button class="btn-secondary calibrate-btn" data-cal-target="local">Calibrate This Gate</button>
-              <button class="btn-secondary calibrate-btn start-only" data-cal-target="peer">Calibrate Peer Gate</button>
-            </div>
-            <div id="calibrationStatus" style="display:none; margin-top: 12px;">
-              <p id="calMessage" style="font-weight: 600; color: var(--accent);"></p>
-            </div>
-          </section>
         </div>
 
         <!-- RESET PAGE -->
@@ -360,7 +346,6 @@
               <button class="btn-secondary" data-peer-command="/api/peer/ping">Ping / Discover</button>
 
               <button class="btn-secondary" data-peer-command="/api/peer/sync">Clock Sync</button>
-              <button class="btn-secondary" data-peer-command="/api/peer/calibrate">Calibrate Peer</button>
               <button class="btn-secondary" data-peer-command="/api/peer/riders/sync">Sync Riders</button>
             </div>
             <pre id="peerResult" style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px;

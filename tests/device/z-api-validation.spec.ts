@@ -59,7 +59,7 @@ for (const port of getHarnessConfig().ports) {
     });
 
     test("@api-validation GET on POST-only endpoints is rejected", async () => {
-      const endpoints = ["/api/ping", "/api/calibrate", "/api/reboot", "/api/nfc/listen"];
+      const endpoints = ["/api/ping", "/api/reboot", "/api/nfc/listen"];
       for (const endpoint of endpoints) {
         const res = await api.get(endpoint);
         expect([404, 405], `${endpoint} should reject GET with 404 or 405`).toContain(res.status());

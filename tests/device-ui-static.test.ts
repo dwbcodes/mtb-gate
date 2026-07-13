@@ -87,12 +87,14 @@ describe("device UI static contract", () => {
     assert.doesNotMatch(firmware, /server\.on\("\/api\/files", HTTP_POST/);
   });
 
-  it("keeps normal sensor calibration on auto calibration only", () => {
+  it("keeps browser calibration retired while preserving trigger delta config", () => {
     const html = readUiFile("index.html");
     const js = readUiFile("main.js");
 
-    assert.match(html, /Auto Calibration/);
-    assert.match(html, /id="currentDelta"/);
+    assert.doesNotMatch(html, /Auto Calibration/);
+    assert.doesNotMatch(html, /id="currentDelta"/);
+    assert.doesNotMatch(html, /calibrate-btn/);
+    assert.doesNotMatch(html, /Calibrate Peer/);
     assert.doesNotMatch(html, /Trigger Delta Above Baseline/);
     assert.doesNotMatch(html, /id="triggerDelta"/);
     assert.doesNotMatch(html, /id="saveSensorConfig"/);
@@ -104,6 +106,8 @@ describe("device UI static contract", () => {
     assert.doesNotMatch(js, /document\.getElementById\('startThreshold'\)/);
     assert.doesNotMatch(js, /document\.getElementById\('line2Threshold'\)/);
     assert.doesNotMatch(js, /document\.getElementById\('finishThreshold'\)/);
+    assert.doesNotMatch(js, /startSensorCalibration/);
+    assert.doesNotMatch(js, /\/api\/calibrate/);
   });
 
   it("routes peer commands through local ESP-NOW APIs instead of browser peer fetches", () => {
@@ -113,8 +117,8 @@ describe("device UI static contract", () => {
 
     assert.match(html, /data-peer-command="\/api\/peer\/ping"/);
     assert.match(html, /data-peer-command="\/api\/peer\/sync"/);
-    assert.match(html, /data-peer-command="\/api\/peer\/calibrate"/);
     assert.match(html, /data-peer-command="\/api\/peer\/riders\/sync"/);
+    assert.doesNotMatch(html, /data-peer-command="\/api\/peer\/calibrate"/);
     assert.doesNotMatch(html, /Check Clock/);
     assert.doesNotMatch(html, /id="checkClockBtn"/);
     assert.doesNotMatch(html, /id="peerUrl"/);
@@ -124,7 +128,7 @@ describe("device UI static contract", () => {
     assert.match(js, /fetch\(endpoint, \{ method: 'POST' \}\)/);
     assert.match(firmware, /server\.on\("\/api\/peer\/ping", HTTP_POST, handlePostPeerPing\)/);
     assert.match(firmware, /server\.on\("\/api\/peer\/sync", HTTP_POST, handlePostPeerSync\)/);
-    assert.match(firmware, /server\.on\("\/api\/peer\/calibrate", HTTP_POST, handlePostPeerCalibrate\)/);
+    assert.doesNotMatch(firmware, /server\.on\("\/api\/peer\/calibrate"/);
     assert.match(firmware, /server\.on\("\/api\/peer\/riders\/sync", HTTP_POST, handlePostPeerRidersSync\)/);
   });
 

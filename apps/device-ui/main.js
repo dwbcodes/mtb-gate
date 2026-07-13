@@ -570,9 +570,6 @@ async function loadNetworkConfig() {
     document.getElementById('wifiChannel').value = config.wifiChannel || 1;
     document.getElementById('peerMac').value = config.peerMac || '';
     document.getElementById('gateNumber').value = String(config.gateNumber ?? 1);
-
-    const deltaEl = document.getElementById('currentDelta');
-    if (deltaEl && config.triggerDelta != null) deltaEl.textContent = config.triggerDelta.toFixed(2);
   } catch (err) {
     console.error('Failed to load config:', err);
   }
@@ -607,38 +604,6 @@ async function saveWifiConfig() {
       document.getElementById('staPassword').value = '';
     }
   );
-}
-
-async function startSensorCalibration(target) {
-  const allBtns = document.querySelectorAll('.calibrate-btn');
-  const statusEl = document.getElementById('calibrationStatus');
-  const msgEl = document.getElementById('calMessage');
-  allBtns.forEach(b => b.disabled = true);
-  statusEl.style.display = 'block';
-  msgEl.textContent = 'Starting calibration...';
-
-  try {
-    await fetch('/api/calibrate?gate=' + encodeURIComponent(target), { method: 'POST' });
-  } catch (err) {
-    msgEl.textContent = 'Error: ' + err.message;
-    allBtns.forEach(b => b.disabled = false);
-    return;
-  }
-
-  const poll = setInterval(async () => {
-    try {
-      const res = await fetch('/api/calibrate/status');
-      const data = await res.json();
-      msgEl.textContent = data.message;
-      const deltaEl = document.getElementById('currentDelta');
-      if (deltaEl && data.triggerDelta != null) deltaEl.textContent = data.triggerDelta.toFixed(2);
-      if (data.phase === 'done' || data.phase === 'idle') {
-        clearInterval(poll);
-        allBtns.forEach(b => b.disabled = false);
-        setTimeout(() => { statusEl.style.display = 'none'; }, 5000);
-      }
-    } catch (_) { /* ignore transient fetch errors */ }
-  }, 1000);
 }
 
 async function savePeerConfig() {
@@ -992,10 +957,6 @@ document.getElementById('filePath').addEventListener('keydown', (event) => {
 
 document.getElementById('saveWifiConfig').addEventListener('click', saveWifiConfig);
 document.getElementById('savePeerConfig').addEventListener('click', savePeerConfig);
-
-document.querySelectorAll('.calibrate-btn').forEach(btn => {
-  btn.addEventListener('click', () => startSensorCalibration(btn.dataset.calTarget));
-});
 
 document.getElementById('testStatus').addEventListener('click', () => testApiEndpoint('status'));
 document.getElementById('testRiders').addEventListener('click', () => testApiEndpoint('riders'));

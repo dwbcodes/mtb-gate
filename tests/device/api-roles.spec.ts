@@ -166,10 +166,4 @@ test.describe("@api-roles finish gate behavior", () => {
     expect(pingRes.ok()).toBeTruthy();
   });
 
-  test("@api-roles finish gate calibrate works", async () => {
-    const res = await api.post("/api/calibrate");
-    expect(res.ok()).toBeTruthy();
-    const body = await res.json();
-    expect(body.ok).toBe(true);
-  });
 });

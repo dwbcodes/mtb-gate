@@ -1360,39 +1360,6 @@ void handlePostReboot() {
   ESP.restart();
 }
 
-void handlePostCalibrate() {
-  if (server.method() != HTTP_POST) {
-    sendJsonError(405, "Method not allowed");
-    return;
-  }
-  if (cal.state != CalState::Idle) {
-    sendJsonError(409, "Calibration already in progress");
-    return;
-  }
-  String target = "all";
-  if (server.hasArg("gate")) {
-    target = server.arg("gate");
-    if (target != "all" && target != "local" && target != "peer") {
-      sendJsonError(400, "gate must be 'all', 'local', or 'peer'");
-      return;
-    }
-  }
-  startCalibration(true, target);
-  sendJson(200, R"({"ok":true,"message":"Calibration started"})");
-}
-
-void handleGetCalibrateStatus() {
-  JsonDocument doc;
-  doc["phase"] = cal.phase.length() ? cal.phase : "idle";
-  doc["message"] = cal.message.length() ? cal.message : "Ready to calibrate";
-  doc["gate"] = cal.gate.length() ? cal.gate : "";
-  doc["triggerDelta"] = config.triggerDelta;
-  if (cal.state == CalState::Done) doc["success"] = cal.success;
-  String out;
-  serializeJson(doc, out);
-  sendJson(200, out);
-}
-
 void handlePostPing() {
   sendEmptyBodyOperation(HTTP_POST, pingJson);
 }
@@ -1488,17 +1455,6 @@ void handlePostPeerSync() {
   String payload;
   serializeJson(doc, payload);
   sendJson(acceptable ? 200 : 504, payload);
-}
-
-void handlePostPeerCalibrate() {
-  if (server.method() != HTTP_POST) {
-    sendJsonError(405, "Method not allowed");
-    return;
-  }
-  if (!requireStartGateForPeerCommand() || !requireEspNowForPeerCommand() || !requireConnectedPeerForPeerCommand()) return;
-  sendEspNowMsg(EspNowMsgType::Calibrate, peerMacBytes);
-  GateLog::info("CAL", "Remote calibration command sent via peer API");
-  sendPeerCommandOk("ESP-NOW peer calibration command sent");
 }
 
 void handlePostPeerClock() {
@@ -2015,14 +1971,11 @@ void configureWebServer() {
   server.on("/api/peer/ping", HTTP_POST, handlePostPeerPing);
   server.on("/api/peer/test", HTTP_POST, handlePostPeerTest);
   server.on("/api/peer/sync", HTTP_POST, handlePostPeerSync);
-  server.on("/api/peer/calibrate", HTTP_POST, handlePostPeerCalibrate);
   server.on("/api/peer/clock", HTTP_POST, handlePostPeerClock);
   server.on("/api/peer/clock", HTTP_GET, handleGetPeerClock);
 
   server.on("/api/peer/riders/sync", HTTP_POST, handlePostPeerRidersSync);
   server.on("/api/reboot", HTTP_POST, handlePostReboot);
-  server.on("/api/calibrate", HTTP_POST, handlePostCalibrate);
-  server.on("/api/calibrate/status", HTTP_GET, handleGetCalibrateStatus);
   
   // Event/storage endpoints
   server.on("/api/results", HTTP_GET, handleGetResults);
