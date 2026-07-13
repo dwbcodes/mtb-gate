@@ -212,6 +212,11 @@ int lastAnnouncedSecond = -1;
 bool falseStartDetected = false;
 unsigned long falseStartTriggeredAtMs = 0;
 
+// ESP-NOW send-callback signaling (volatile: written in WiFi task, read in main task)
+volatile bool espNowSendDone     = false;
+volatile bool espNowSendOk       = false;
+volatile bool espNowSendRetrying = false;  // true when caller is waiting to retry
+
 float readSensorVoltage(int pin) {
   int raw = analogRead(pin);
   return (raw / ADC_MAX) * ADC_VREF;
@@ -274,7 +279,7 @@ bool sensorTriggered(int pin) {
 }
 
 // Forward declaration for calibration
-void sendEspNowMsg(EspNowMsgType type, const uint8_t* destMac, unsigned long ts1, unsigned long ts2);
+void sendEspNowMsg(EspNowMsgType type, const uint8_t* destMac, unsigned long ts1 = 0, unsigned long ts2 = 0, int retries = 0);
 void startWifi();
 void initEspNow();
 
@@ -500,18 +505,45 @@ void registerEspNowPeer(const uint8_t* mac) {
   }
 }
 
-void sendEspNowMsg(EspNowMsgType type, const uint8_t* destMac, unsigned long ts1 = 0, unsigned long ts2 = 0) {
+// retries: number of additional attempts after first failure (0 = fire-and-forget).
+// ONLY pass retries>0 when called from loop() — NOT from ESP-NOW callbacks (would deadlock).
+void sendEspNowMsg(EspNowMsgType type, const uint8_t* destMac, unsigned long ts1, unsigned long ts2, int retries) {
   EspNowPayload payload;
   payload.type = type;
   payload.timestampMs = ts1 ? ts1 : millis();
   payload.timestampMs2 = ts2;
-  esp_err_t result = esp_now_send(destMac, (uint8_t*)&payload, sizeof(payload));
-  if (result != ESP_OK) {
-    char macStr[18];
-    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-      destMac[0], destMac[1], destMac[2], destMac[3], destMac[4], destMac[5]);
-    GateLog::info("ESP-NOW", "Send FAILED to " + String(macStr) + " err=" + String(result));
+
+  char macStr[18];
+  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+    destMac[0], destMac[1], destMac[2], destMac[3], destMac[4], destMac[5]);
+
+  espNowSendRetrying = (retries > 0);
+
+  for (int attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) delay(50);
+
+    espNowSendDone = false;
+    espNowSendOk   = false;
+
+    esp_err_t result = esp_now_send(destMac, (uint8_t*)&payload, sizeof(payload));
+    if (result != ESP_OK) {
+      espNowSendRetrying = false;
+      GateLog::info("ESP-NOW", "Send queuing failed to " + String(macStr) + " err=" + String(result));
+      return;
+    }
+
+    if (retries == 0) return;  // fire-and-forget — callback handles logging
+
+    // Wait for delivery callback (runs in WiFi task; we're in main task — safe to block)
+    unsigned long waitStart = millis();
+    while (!espNowSendDone && millis() - waitStart < 100) yield();
+
+    if (espNowSendOk) { espNowSendRetrying = false; return; }  // delivered
   }
+
+  espNowSendRetrying = false;
+  GateLog::info("ESP-NOW", "Delivery FAILED after " + String(retries + 1) +
+    " attempts to " + String(macStr));
 }
 
 static const uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
@@ -596,7 +628,7 @@ void broadcastRiders() {
 void sendSyncRequest() {
   if (!espNowReady) return;
   syncT1 = millis();
-  sendEspNowMsg(EspNowMsgType::SyncRequest, peerMacBytes, syncT1);
+  sendEspNowMsg(EspNowMsgType::SyncRequest, peerMacBytes, syncT1, 0, 2);
   GateLog::info("SYNC", "Request sent (T1=" + String(syncT1) + ")");
 }
 
@@ -839,7 +871,11 @@ void initEspNow() {
   }
   esp_now_register_recv_cb(onEspNowRecv);
   esp_now_register_send_cb([](const uint8_t* mac, esp_now_send_status_t status) {
-    if (status != ESP_NOW_SEND_SUCCESS) {
+    espNowSendOk   = (status == ESP_NOW_SEND_SUCCESS);
+    espNowSendDone = true;
+    // For fire-and-forget sends (retrying=false) log failures immediately;
+    // retried sends are logged by the caller after all attempts exhausted.
+    if (!espNowSendOk && !espNowSendRetrying) {
       char macStr[18];
       snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
@@ -2577,9 +2613,9 @@ void loop() {
   if (config.role == GateRole::Start && now - lastPingAt >= PING_INTERVAL_MS) {
     lastPingAt = now;
     sendPing();  // broadcast to FF:FF:FF:FF:FF:FF
-    // Also send directed ping to known peer — works even if channels differ
+    // Also send directed ping to known peer; retry up to 2× if temporarily busy
     if (espNowReady) {
-      sendEspNowMsg(EspNowMsgType::Ping, peerMacBytes, millis(), (unsigned long)config.wifiChannel);
+      sendEspNowMsg(EspNowMsgType::Ping, peerMacBytes, millis(), (unsigned long)config.wifiChannel, 2);
     }
     // Riders are broadcast on add/delete/config change — no periodic sync needed
   }
