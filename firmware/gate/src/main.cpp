@@ -2062,7 +2062,7 @@ void startRunForRider(const String& tagId) {
   GateLog::info("RUN", "Rider " + rider->displayName + " scanned - starting countdown");
 }
 
-unsigned long lastStartDiagAt = 0;
+
 
 void handleStartGateLoop(unsigned long now) {
   if (activeRunId.length() == 0) {
@@ -2074,14 +2074,6 @@ void handleStartGateLoop(unsigned long now) {
       updateBaseline(idleV);
     }
     sensorAboveCount = 0;
-    // Periodic idle diagnostics every 10s (matches finish gate behavior)
-    if (now - lastStartDiagAt >= 10000) {
-      lastStartDiagAt = now;
-      float v = readSensorVoltage(SENSOR_LINE1_PIN);
-      float bl = getBaseline();
-      GateLog::info("START", "Idle: v=" + String(v, 2) + "V bl=" + String(bl, 2) +
-        "V thr=" + String(bl + triggerDelta, 2) + "V delta=" + String(triggerDelta, 2) + "V");
-    }
     return;
   }
 
@@ -2214,7 +2206,6 @@ void handleStartGateLoop(unsigned long now) {
 bool finishTriggered = false;
 unsigned long finishCooldownUntil = 0;
 constexpr unsigned long FINISH_COOLDOWN_MS = 5000;  // 5s lockout after trigger
-unsigned long lastFinishDiagAt = 0;
 
 void handleFinishGateLoop() {
   // Skip sensor checks during calibration to avoid false triggers
@@ -2228,17 +2219,6 @@ void handleFinishGateLoop() {
       GateLog::info("FINISH", "Ready for next trigger");
     }
     return;  // Skip ALL sensor reads during cooldown
-  }
-
-  // Periodic diagnostics every 10s
-  if (millis() - lastFinishDiagAt >= 10000) {
-    lastFinishDiagAt = millis();
-    float v = readSensorVoltage(SENSOR_LINE1_PIN);
-    float bl = getBaseline();
-    GateLog::info("FINISH", "Sensor: v=" + String(v, 2) + "V baseline=" + String(bl, 2) +
-      "V delta=" + String(triggerDelta, 2) + "V threshold=" + String(bl + triggerDelta, 2) +
-      "V espNow=" + String(espNowReady ? "yes" : "NO") +
-      " peer=" + config.peerMac);
   }
 
   if (sensorTriggered(SENSOR_LINE1_PIN)) {
@@ -2440,12 +2420,7 @@ void loop() {
     if (espNowReady) {
       sendEspNowMsg(EspNowMsgType::Ping, peerMacBytes, millis(), (unsigned long)config.wifiChannel);
     }
-    // Sync riders every 5th ping (~50s) so late-joining gates get the list
-    static uint8_t pingCount = 0;
-    if (++pingCount >= 5) {
-      pingCount = 0;
-      broadcastRiders();
-    }
+    // Riders are broadcast on add/delete/config change — no periodic sync needed
   }
 
   if (config.role == GateRole::Start) {
