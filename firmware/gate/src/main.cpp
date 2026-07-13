@@ -1,7 +1,9 @@
 #include <Arduino.h>
 #include <HardwareSerial.h>
+#include <Wire.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <LittleFS.h>
 #include <esp_now.h>
 #include <ArduinoJson.h>
 #include "gate_config.h"
@@ -57,6 +59,7 @@ struct CalibrationContext {
   float idleMin, idleMax, idleSum;
   int idleCount;
   float peakV;
+  float troughV;
   String phase;
   String message;
   String gate;
@@ -108,7 +111,7 @@ unsigned long lastRttMs = 0;   // start gate: last measured RTT
 unsigned long lastSyncAtMs = 0; // start gate: when last sync completed
 
 // Sensor pin and reading
-constexpr int SENSOR_LINE1_PIN = 0;
+constexpr int SENSOR_LINE1_PIN = 4;
 constexpr int BUZZER_PIN = 5;
 // LEDC hardware buzzer — attached once in setup(), toggled via duty
 constexpr uint8_t BUZZER_LEDC_CHAN = 0;
@@ -189,9 +192,23 @@ void freezeBaseline() { baselineFrozen = true; }
 void unfreezeBaseline() { baselineFrozen = false; }
 
 bool sensorTriggered(int pin) {
-  float voltage = readSensorVoltage(pin);
+  int raw = analogRead(pin);
+  float voltage = (raw / ADC_MAX) * ADC_VREF;
+  // Reject floor readings (0V = disconnected/corrupted)
+  if (voltage < 0.02F) {
+    sensorAboveCount = 0;
+    return false;
+  }
   float baseline = getBaseline();
-  if (voltage > baseline + triggerDelta) {
+  // ADC saturation detection: if baseline is high (>2.5V, i.e. sensor idles
+  // near rail) and we hit ADC max, treat saturation AS the trigger signal.
+  // The MPXV7002DP outputs ~2.5V idle at 5V supply, which maps to ~3.1V
+  // on ESP32-C3 ADC. Pressure pushes it to rail (4095).
+  bool adcSaturated = (raw >= 4090) && (baseline > 2.5F);
+  // Bidirectional: MPXV7002DP pressure tube can produce signal in either
+  // direction depending on port wiring. Detect any significant deviation.
+  float deviation = voltage - baseline;
+  if (adcSaturated || deviation > triggerDelta || deviation < -triggerDelta) {
     sensorAboveCount++;
   } else {
     sensorAboveCount = 0;
@@ -298,15 +315,35 @@ void updateCalibration() {
     if (v > cal.idleMax) cal.idleMax = v;
     cal.idleSum += v;
     cal.idleCount++;
+    // Log every 10th sample to show ADC behavior during idle sampling
+    if (cal.idleCount % 10 == 0) {
+      GateLog::info("CAL", "idle sample #" + String(cal.idleCount) + " v=" + String(v, 2) +
+        "V min=" + String(cal.idleMin, 2) + " max=" + String(cal.idleMax, 2));
+    }
 
     if (elapsed >= 3000) {
       float idleAvg = cal.idleSum / cal.idleCount;
       float noiseRange = cal.idleMax - cal.idleMin;
       GateLog::info("CAL", "Idle: avg=" + String(idleAvg, 2) + "V noise=" + String(noiseRange, 2) + "V");
+
+      // Sanity check: if idle SATURATES at ADC max, sensor is disconnected or ADC is corrupted
+      // (Note: MPXV7002DP at 5V supply idles at ~2.5V real / ~3.1V mapped, which is fine)
+      if (idleAvg > 3.28F) {
+        GateLog::info("CAL", "FAILED - sensor saturated at ADC rail (" + String(idleAvg, 2) + "V), check wiring");
+        cal.state = CalState::Done;
+        cal.phase = "done";
+        cal.message = "FAILED - sensor reads " + String(idleAvg, 2) + "V (rail), check wiring";
+        cal.success = false;
+        cal.phaseStartMs = millis();
+        buzzerTone(400, 500);
+        return;
+      }
+
       cal.state = CalState::LocalPress;
       cal.phase = "local_press";
       cal.message = String(cal.gate) + ": PRESS the tube now!";
       cal.peakV = 0.0F;
+      cal.troughV = 9.0F;
       cal.phaseStartMs = millis();
       // Three quick beeps: "PRESS the tube now!"
       buzzerTone(1200, 150); delay(200);
@@ -320,22 +357,36 @@ void updateCalibration() {
   if (cal.state == CalState::LocalPress) {
     float v = readSensorVoltage(SENSOR_LINE1_PIN);
     if (v > cal.peakV) cal.peakV = v;
+    if (v < cal.troughV) cal.troughV = v;
+    // Log every 10th sample to show peak/trough tracking during press phase
+    static int pressCount = 0;
+    pressCount++;
+    if (pressCount % 10 == 0) {
+      GateLog::info("CAL", "press #" + String(pressCount) + " v=" + String(v, 2) +
+        "V peak=" + String(cal.peakV, 2) + " trough=" + String(cal.troughV, 2));
+    }
 
     if (elapsed >= 5000) {
+      pressCount = 0;
       float idleAvg = cal.idleSum / cal.idleCount;
       float noiseRange = cal.idleMax - cal.idleMin;
-      float peakDelta = cal.peakV - idleAvg;
-      GateLog::info("CAL", "Peak: " + String(cal.peakV, 2) + "V delta=" + String(peakDelta, 2) + "V");
+      // Bidirectional: tube press may increase OR decrease voltage depending on port wiring
+      float peakDelta = cal.peakV - idleAvg;     // upward deviation
+      float troughDelta = idleAvg - cal.troughV;  // downward deviation
+      float maxDelta = max(peakDelta, troughDelta);
+      GateLog::info("CAL", "Peak: " + String(cal.peakV, 2) + "V (+" + String(peakDelta, 2) +
+        "V) Trough: " + String(cal.troughV, 2) + "V (-" + String(troughDelta, 2) + "V)");
 
-      if (peakDelta < noiseRange * 1.2F) {
-        GateLog::info("CAL", "FAILED - peak not significantly above noise");
+      if (maxDelta < noiseRange * 1.2F) {
+        GateLog::info("CAL", "FAILED - signal not significantly above noise");
         cal.message = "FAILED - press harder or check tube connection";
         cal.success = false;
         buzzerTone(400, 500); // Low tone: failure
       } else {
-        // Set threshold midway between noise ceiling and peak signal
-        float newDelta = (noiseRange + peakDelta) / 2.0F;
+        // Set threshold midway between noise ceiling and strongest signal direction
+        float newDelta = (noiseRange + maxDelta) / 2.0F;
         if (newDelta < 0.05F) newDelta = 0.05F;
+        if (newDelta > 1.5F) newDelta = 1.5F;  // Cap at 1.5V — higher is likely bad data
         triggerDelta = newDelta;
         config.triggerDelta = newDelta;
         config = configStore.save(config);
@@ -350,14 +401,18 @@ void updateCalibration() {
       cal.phase = "done";
       cal.phaseStartMs = millis();
 
-      // Re-seed baseline after calibration so sensor is immediately responsive
-      for (int i = 0; i < BASELINE_SAMPLES; i++) {
-        baselineBuffer[i] = readSensorVoltage(SENSOR_LINE1_PIN);
-        delay(5);
+      // Re-seed baseline from calibration idle average (not live reads which
+      // may still be settling after the press phase)
+      if (cal.success) {
+        float idleAvg = cal.idleSum / cal.idleCount;
+        for (int i = 0; i < BASELINE_SAMPLES; i++) {
+          baselineBuffer[i] = idleAvg;
+        }
+        baselineFilled = true;
+        sensorAboveCount = 0;
+        unfreezeBaseline();  // let baseline self-correct during idle
+        GateLog::info("CAL", "Baseline seeded from idle avg: " + String(idleAvg, 2) + "V delta=" + String(triggerDelta, 2) + "V");
       }
-      baselineFilled = true;
-      sensorAboveCount = 0;
-      GateLog::info("CAL", "Baseline re-seeded: " + String(getBaseline(), 2) + "V delta=" + String(triggerDelta, 2) + "V");
     }
     return;
   }
@@ -1550,6 +1605,111 @@ void handleGetSessions() {
   sendJson(200, eventStore.getSessionsJson());
 }
 
+bool normalizeLittleFsPath(const String& input, String& out) {
+  out = input;
+  out.trim();
+  out.replace("\\", "/");
+  if (out.length() == 0) out = "/";
+  if (!out.startsWith("/")) out = "/" + out;
+  while (out.indexOf("//") >= 0) out.replace("//", "/");
+  if (out.indexOf("..") >= 0) return false;
+  if (out.length() > 1 && out.endsWith("/")) out.remove(out.length() - 1);
+  return true;
+}
+
+String fileNameFromPath(const String& path) {
+  if (path == "/") return "/";
+  int slash = path.lastIndexOf('/');
+  return slash >= 0 ? path.substring(slash + 1) : path;
+}
+
+String contentTypeForPath(const String& path) {
+  if (path.endsWith(".json")) return "application/json; charset=utf-8";
+  if (path.endsWith(".jsonl")) return "application/x-ndjson; charset=utf-8";
+  if (path.endsWith(".txt") || path.endsWith(".log") || path.endsWith(".md")) return "text/plain; charset=utf-8";
+  if (path.endsWith(".csv")) return "text/csv; charset=utf-8";
+  return "text/plain; charset=utf-8";
+}
+
+void handleGetFiles() {
+  String path;
+  if (!normalizeLittleFsPath(server.arg("path"), path)) {
+    sendJsonError(400, "Invalid path");
+    return;
+  }
+
+  File dir = LittleFS.open(path);
+  if (!dir) {
+    sendJsonError(404, "Path not found");
+    return;
+  }
+  if (!dir.isDirectory()) {
+    dir.close();
+    sendJsonError(400, "Path is not a directory");
+    return;
+  }
+
+  JsonDocument doc;
+  doc["path"] = path;
+  doc["totalBytes"] = LittleFS.totalBytes();
+  doc["usedBytes"] = LittleFS.usedBytes();
+  JsonArray entries = doc["entries"].to<JsonArray>();
+
+  File entry = dir.openNextFile();
+  while (entry) {
+    String entryPath = String(entry.path());
+    if (!entryPath.startsWith("/")) entryPath = path == "/" ? "/" + entryPath : path + "/" + entryPath;
+    JsonObject obj = entries.add<JsonObject>();
+    obj["name"] = fileNameFromPath(entryPath);
+    obj["path"] = entryPath;
+    obj["type"] = entry.isDirectory() ? "dir" : "file";
+    obj["size"] = entry.isDirectory() ? 0 : entry.size();
+    entry.close();
+    entry = dir.openNextFile();
+  }
+  dir.close();
+
+  String out;
+  serializeJson(doc, out);
+  sendJson(200, out);
+}
+
+void handleGetFileView() {
+  String path;
+  if (!normalizeLittleFsPath(server.arg("path"), path)) {
+    sendJsonError(400, "Invalid path");
+    return;
+  }
+
+  File file = LittleFS.open(path, "r");
+  if (!file) {
+    sendJsonError(404, "File not found");
+    return;
+  }
+  if (file.isDirectory()) {
+    file.close();
+    sendJsonError(400, "Path is a directory");
+    return;
+  }
+
+  constexpr size_t kMaxFileViewBytes = 24576;
+  size_t fileSize = file.size();
+  bool truncated = fileSize > kMaxFileViewBytes;
+  String body;
+  body.reserve((truncated ? kMaxFileViewBytes : fileSize) + 1);
+  size_t readBytes = 0;
+  while (file.available() && readBytes < kMaxFileViewBytes) {
+    body += char(file.read());
+    readBytes++;
+  }
+  file.close();
+
+  server.sendHeader("X-File-Size", String(fileSize));
+  server.sendHeader("X-File-Truncated", truncated ? "true" : "false");
+  sendNoCacheHeaders();
+  server.send(200, contentTypeForPath(path), body);
+}
+
 void handleGetSessionFile() {
   // URL: /api/sessions/<num>/<filename>
   // WebServer doesn't support path params, so we use query params
@@ -1629,6 +1789,8 @@ void configureWebServer() {
   server.on("/api/events", HTTP_GET, handleGetEvents);
   server.on("/api/runs", HTTP_GET, handleGetRuns);
   server.on("/api/storage", HTTP_GET, handleGetStorage);
+  server.on("/api/files", HTTP_GET, handleGetFiles);
+  server.on("/api/files/view", HTTP_GET, handleGetFileView);
   server.on("/api/sessions", HTTP_GET, handleGetSessions);
   server.on("/api/sessions/file", HTTP_GET, handleGetSessionFile);
   server.on("/api/storage/prune", HTTP_POST, handlePostPrune);
@@ -1724,6 +1886,15 @@ void handleSerialCommand(const String& rawCommand) {
     GateLog::print("Saved role=finish. Rebooting...");
     delay(500);
     ESP.restart();
+    return;
+  }
+
+  if (command.equalsIgnoreCase("adc")) {
+    GateLog::info("ADC", "Scanning all ADC pins (GPIO 0-4)...");
+    for (int pin = 0; pin <= 4; pin++) {
+      float v = (analogRead(pin) / ADC_MAX) * ADC_VREF;
+      GateLog::info("ADC", "GPIO" + String(pin) + ": " + String(v, 2) + "V (raw=" + String(analogRead(pin)) + ")");
+    }
     return;
   }
 
@@ -1825,8 +1996,28 @@ void startRunForRider(const String& tagId) {
   GateLog::info("RUN", "Rider " + rider->displayName + " scanned - starting countdown");
 }
 
+unsigned long lastStartDiagAt = 0;
+
 void handleStartGateLoop(unsigned long now) {
-  if (activeRunId.length() == 0) return;
+  if (activeRunId.length() == 0) {
+    // Force-update baseline during idle — no run active, so any reading is
+    // valid idle data. This lets baseline self-correct after calibration or
+    // sensor drift without being gated by triggerDelta.
+    float idleV = readSensorVoltage(SENSOR_LINE1_PIN);
+    if (idleV > 0.02F && idleV < 3.28F) {
+      updateBaseline(idleV);
+    }
+    sensorAboveCount = 0;
+    // Periodic idle diagnostics every 10s (matches finish gate behavior)
+    if (now - lastStartDiagAt >= 10000) {
+      lastStartDiagAt = now;
+      float v = readSensorVoltage(SENSOR_LINE1_PIN);
+      float bl = getBaseline();
+      GateLog::info("START", "Idle: v=" + String(v, 2) + "V bl=" + String(bl, 2) +
+        "V thr=" + String(bl + triggerDelta, 2) + "V delta=" + String(triggerDelta, 2) + "V");
+    }
+    return;
+  }
 
   RunRecord* run = queue.find(activeRunId);
   if (!run) { activeRunId = ""; unfreezeBaseline(); return; }
@@ -1855,6 +2046,11 @@ void handleStartGateLoop(unsigned long now) {
         case 10: buzzerTone(800, 500); break;
         case 5: case 4: case 3: case 2: case 1: buzzerTone(1000, 200); break;
       }
+      // Diagnostic: log sensor state each countdown second
+      float cdV = readSensorVoltage(SENSOR_LINE1_PIN);
+      float cdBl = getBaseline();
+      GateLog::info("SENSOR", "v=" + String(cdV, 2) + "V bl=" + String(cdBl, 2) +
+        "V thr=" + String(cdBl + triggerDelta, 2) + "V above=" + String(sensorAboveCount));
     }
 
     // Check false start throughout entire countdown
@@ -1862,7 +2058,10 @@ void handleStartGateLoop(unsigned long now) {
       falseStartDetected = true;
       falseStartTriggeredAtMs = now;
       eventStore.logEvent("false_start", run->runId, run->riderId, now);
-      GateLog::info("RUN", "FALSE START! 5 second penalty");
+      float fsV = readSensorVoltage(SENSOR_LINE1_PIN);
+      float fsBl = getBaseline();
+      GateLog::info("RUN", "FALSE START! v=" + String(fsV, 2) + "V bl=" + String(fsBl, 2) +
+        "V delta=" + String(triggerDelta, 2) + "V - 5s penalty");
     }
 
     // Countdown complete
@@ -1881,6 +2080,7 @@ void handleStartGateLoop(unsigned long now) {
         unfreezeBaseline();
       } else {
         queue.updateStatus(run->runId, RunStatus::AwaitingStart, now);
+        sensorAboveCount = 0;  // reset debounce — don't carry countdown noise into trigger
         GateLog::info("RUN", "GO!");
         buzzerTone(2000, 2000);
       }
@@ -1890,11 +2090,23 @@ void handleStartGateLoop(unsigned long now) {
 
   // AwaitingStart → wait for sensor trigger
   if (run->status == RunStatus::AwaitingStart) {
+    // Diagnostic: log sensor state every 500ms while waiting for trigger
+    static unsigned long lastAwaitDiagAt = 0;
+    if (now - lastAwaitDiagAt >= 500) {
+      lastAwaitDiagAt = now;
+      float awV = readSensorVoltage(SENSOR_LINE1_PIN);
+      float awBl = getBaseline();
+      GateLog::info("SENSOR", "await: v=" + String(awV, 2) + "V bl=" + String(awBl, 2) +
+        "V thr=" + String(awBl + triggerDelta, 2) + "V above=" + String(sensorAboveCount));
+    }
     if (sensorTriggered(SENSOR_LINE1_PIN)) {
       queue.updateStatus(run->runId, RunStatus::OnCourse, now);
       eventStore.logEvent("start_triggered", run->runId, run->riderId, now);
       unsigned long reactionMs = run->startTriggeredAtMs - run->goAtMs;
-      GateLog::info("RUN", "TRIGGERED - Reaction: " + String(reactionMs / 1000.0F, 3) + "s");
+      float tV = readSensorVoltage(SENSOR_LINE1_PIN);
+      float tBl = getBaseline();
+      GateLog::info("RUN", "TRIGGERED v=" + String(tV, 2) + "V bl=" + String(tBl, 2) +
+        "V delta=" + String(triggerDelta, 2) + "V - Reaction: " + String(reactionMs / 1000.0F, 3) + "s");
       GateLog::info("RUN", "On course - waiting for finish gate...");
       unfreezeBaseline();
     }
@@ -2023,36 +2235,44 @@ void loop() {
     if (nfcReader.isInitialized()) {
       GateLog::info("NFC", "Reader initialized successfully");
     } else {
-      GateLog::info("NFC", "Reader not detected - check wiring SDA=GPIO8 SCL=GPIO10");
+      GateLog::info("NFC", "Reader not detected - releasing I2C bus");
+      Wire.end();  // Free I2C hardware — it corrupts ADC reads even when idle
     }
   }
 
-  nfcReader.poll();
+  // Skip NFC I2C during calibration AND active runs — I2C transactions on
+  // ESP32-C3 corrupt ADC reads (causes 0-3.3V oscillation on sensor pin).
+  // Re-scan cancellation is unavailable during runs; use web UI cancel instead.
+  bool nfcSafe = (cal.state == CalState::Idle || cal.state == CalState::Done)
+                 && activeRunId.length() == 0;
+  if (nfcSafe) {
+    nfcReader.poll();
 
-  // Continuously scan NFC on the start gate. A tag is accepted only when it
-  // newly appears so holding it in place does not start and immediately cancel.
-  if (config.role == GateRole::Start && nfcReader.isInitialized()) {
-    String tagId;
-    if (nfcReader.readTag(tagId)) {
-      const bool newPresentation = !nfcTagPresent || observedNfcTag != tagId;
-      nfcTagPresent = true;
-      observedNfcTag = tagId;
-      if (newPresentation) {
-        lastScannedNfcTag = tagId;
-        GateLog::info("NFC", "Tag scanned: " + tagId);
-        startRunForRider(tagId);
+    // Continuously scan NFC on the start gate. A tag is accepted only when it
+    // newly appears so holding it in place does not start and immediately cancel.
+    if (config.role == GateRole::Start && nfcReader.isInitialized()) {
+      String tagId;
+      if (nfcReader.readTag(tagId)) {
+        const bool newPresentation = !nfcTagPresent || observedNfcTag != tagId;
+        nfcTagPresent = true;
+        observedNfcTag = tagId;
+        if (newPresentation) {
+          lastScannedNfcTag = tagId;
+          GateLog::info("NFC", "Tag scanned: " + tagId);
+          startRunForRider(tagId);
+        }
+      } else {
+        nfcTagPresent = false;
+        observedNfcTag = "";
       }
-    } else {
-      nfcTagPresent = false;
-      observedNfcTag = "";
     }
-  }
 
-  // Also check API-triggered listen window (for registration flow)
-  if (config.role == GateRole::Start) {
-    String tagId;
-    if (nfcReader.getScannedTag(tagId)) {
-      lastScannedNfcTag = tagId;
+    // Also check API-triggered listen window (for registration flow)
+    if (config.role == GateRole::Start) {
+      String tagId;
+      if (nfcReader.getScannedTag(tagId)) {
+        lastScannedNfcTag = tagId;
+      }
     }
   }
 

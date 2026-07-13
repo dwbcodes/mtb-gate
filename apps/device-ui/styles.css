@@ -637,6 +637,96 @@ button:disabled {
   margin-top: 12px;
 }
 
+.inline-message {
+  min-height: 20px;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.muted-mono {
+  min-width: 0;
+  color: var(--muted);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.file-path-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.file-path-row label {
+  margin-top: 0;
+}
+
+.file-breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.file-crumb {
+  min-height: 34px;
+  padding: 6px 10px;
+  color: var(--accent);
+  background: var(--accent-2);
+  border-color: #bddcc9;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+}
+
+.file-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 12px;
+  color: var(--ink);
+  background: var(--surface-2);
+  border-color: var(--line);
+  text-align: left;
+}
+
+.file-row strong {
+  min-width: 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.file-row span,
+.file-empty {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.file-viewer {
+  min-height: 240px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  color: #f7fbff;
+  background: #17201b;
+  border-radius: 8px;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 pre {
   max-width: 100%;
 }
@@ -719,5 +809,9 @@ pre {
   .peer-row {
     grid-template-columns: 130px 1fr;
     align-items: end;
+  }
+
+  .file-path-row {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 }

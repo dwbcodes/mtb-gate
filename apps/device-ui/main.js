@@ -1,6 +1,7 @@
 // PAGE NAVIGATION (hash-based)
-const PAGES = ['results', 'riders', 'config-network', 'config-gate', 'config-reset', 'docs', 'peer-tools'];
+const PAGES = ['results', 'riders', 'files', 'config-network', 'config-gate', 'config-reset', 'docs', 'peer-tools'];
 let currentRole = null;
+let currentFilePath = '/';
 
 async function apiJson(path, options = {}) {
   const response = await fetch(path, options);
@@ -34,6 +35,8 @@ function navigateTo(page) {
 
   if (page === 'docs') {
     loadSelectedDoc();
+  } else if (page === 'files') {
+    loadFiles(currentFilePath);
   }
 }
 
@@ -392,6 +395,163 @@ async function registerRider(displayName, tagId) {
   }
 }
 
+// FILES PAGE
+function normalizeUiPath(path) {
+  let value = String(path || '/').trim();
+  if (!value.startsWith('/')) value = '/' + value;
+  value = value.replace(/\/+/g, '/');
+  if (value.length > 1 && value.endsWith('/')) value = value.slice(0, -1);
+  return value || '/';
+}
+
+function parentPath(path) {
+  const normalized = normalizeUiPath(path);
+  if (normalized === '/') return '/';
+  const slash = normalized.lastIndexOf('/');
+  return slash <= 0 ? '/' : normalized.slice(0, slash);
+}
+
+function basename(path) {
+  const normalized = normalizeUiPath(path);
+  if (normalized === '/') return '/';
+  return normalized.slice(normalized.lastIndexOf('/') + 1);
+}
+
+function setFilesMessage(message, error = false) {
+  const el = document.getElementById('filesMessage');
+  if (!el) return;
+  el.textContent = message || '';
+  el.style.color = error ? 'var(--danger)' : 'var(--muted)';
+}
+
+function renderFileBreadcrumbs(path) {
+  const container = document.getElementById('fileBreadcrumbs');
+  container.replaceChildren();
+
+  const rootButton = document.createElement('button');
+  rootButton.className = 'file-crumb';
+  rootButton.textContent = '/';
+  rootButton.addEventListener('click', () => loadFiles('/'));
+  container.appendChild(rootButton);
+
+  const parts = normalizeUiPath(path).split('/').filter(Boolean);
+  let built = '';
+  for (const part of parts) {
+    built += '/' + part;
+    const crumbPath = built;
+    const button = document.createElement('button');
+    button.className = 'file-crumb';
+    button.textContent = part;
+    button.addEventListener('click', () => loadFiles(crumbPath));
+    container.appendChild(button);
+  }
+}
+
+function renderFileList(data) {
+  const list = document.getElementById('fileList');
+  list.replaceChildren();
+
+  const path = normalizeUiPath(data.path || '/');
+  if (path !== '/') {
+    list.appendChild(renderFileRow({
+      name: '..',
+      path: parentPath(path),
+      type: 'dir',
+      size: 0
+    }));
+  }
+
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  if (entries.length === 0 && path === '/') {
+    const empty = document.createElement('p');
+    empty.className = 'file-empty';
+    empty.textContent = 'LittleFS is empty.';
+    list.appendChild(empty);
+    return;
+  }
+
+  for (const entry of entries) {
+    list.appendChild(renderFileRow(entry));
+  }
+}
+
+function renderFileRow(entry) {
+  const row = document.createElement('button');
+  row.className = 'file-row';
+  row.type = 'button';
+
+  const name = document.createElement('strong');
+  name.textContent = entry.name || basename(entry.path);
+
+  const meta = document.createElement('span');
+  const isDir = entry.type === 'dir';
+  meta.textContent = isDir ? 'Directory' : formatBytes(entry.size || 0);
+
+  row.appendChild(name);
+  row.appendChild(meta);
+  row.addEventListener('click', () => {
+    if (isDir) {
+      loadFiles(entry.path);
+    } else {
+      viewFile(entry.path);
+    }
+  });
+  return row;
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (value < 1024) return value + ' B';
+  if (value < 1024 * 1024) return (value / 1024).toFixed(1) + ' KB';
+  return (value / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+async function loadFiles(path = currentFilePath) {
+  const nextPath = normalizeUiPath(path);
+  currentFilePath = nextPath;
+  const input = document.getElementById('filePath');
+  if (input) input.value = nextPath;
+  renderFileBreadcrumbs(nextPath);
+  setFilesMessage('Loading...');
+
+  try {
+    const data = await apiJson('/api/files?path=' + encodeURIComponent(nextPath));
+    currentFilePath = normalizeUiPath(data.path || nextPath);
+    if (input) input.value = currentFilePath;
+    renderFileBreadcrumbs(currentFilePath);
+    renderFileList(data);
+    setFilesMessage((data.entries || []).length + ' item(s)');
+  } catch (err) {
+    document.getElementById('fileList').replaceChildren();
+    setFilesMessage('Error: ' + err.message, true);
+  }
+}
+
+async function viewFile(path) {
+  const viewer = document.getElementById('fileViewer');
+  const meta = document.getElementById('fileViewerMeta');
+  viewer.textContent = 'Loading...';
+  meta.textContent = normalizeUiPath(path);
+
+  try {
+    const response = await fetch('/api/files/view?path=' + encodeURIComponent(normalizeUiPath(path)));
+    const text = await response.text();
+    if (!response.ok) {
+      let message = text;
+      try {
+        message = JSON.parse(text).error || message;
+      } catch (_) { /* keep raw text */ }
+      throw new Error(message || 'HTTP ' + response.status);
+    }
+    viewer.textContent = text || '(empty file)';
+    const size = response.headers.get('X-File-Size');
+    const truncated = response.headers.get('X-File-Truncated') === 'true';
+    meta.textContent = normalizeUiPath(path) + (size ? ' · ' + formatBytes(size) : '') + (truncated ? ' · truncated' : '');
+  } catch (err) {
+    viewer.textContent = 'Error: ' + err.message;
+  }
+}
+
 // NETWORK CONFIG PAGE
 async function loadNetworkConfig() {
   try {
@@ -400,22 +560,14 @@ async function loadNetworkConfig() {
     document.getElementById('apSsid').value = config.deviceId || '';
     document.getElementById('staSsid').value = config.staSsid || '';
     document.getElementById('wifiChannel').value = config.wifiChannel || 1;
-    document.getElementById('triggerDelta').value = config.triggerDelta || 0.30;
     document.getElementById('peerMac').value = config.peerMac || '';
     document.getElementById('gateNumber').value = String(config.gateNumber ?? 1);
 
     const deltaEl = document.getElementById('currentDelta');
     if (deltaEl && config.triggerDelta != null) deltaEl.textContent = config.triggerDelta.toFixed(2);
-
-    updateSliderValues();
   } catch (err) {
     console.error('Failed to load config:', err);
   }
-}
-
-function updateSliderValues() {
-  document.getElementById('triggerDeltaValue').textContent =
-    document.getElementById('triggerDelta').value;
 }
 
 async function saveJsonConfig(endpoint, payload, messageElementId, successText, afterSuccess) {
@@ -479,14 +631,6 @@ async function startSensorCalibration(target) {
       }
     } catch (_) { /* ignore transient fetch errors */ }
   }, 1000);
-}
-
-async function saveSensorConfig() {
-  const config = {
-    triggerDelta: parseFloat(document.getElementById('triggerDelta').value)
-  };
-
-  await saveJsonConfig('/api/config/time', config, 'sensorMessage', '✓ Saved!');
 }
 
 async function savePeerConfig() {
@@ -855,12 +999,14 @@ async function sendPeerCommand(endpoint, button) {
 document.getElementById('tapNfc').addEventListener('click', startNfcListen);
 document.getElementById('refreshRiders').addEventListener('click', loadRiders);
 document.getElementById('refreshResults').addEventListener('click', loadStatus);
+document.getElementById('refreshFiles').addEventListener('click', () => loadFiles(currentFilePath));
+document.getElementById('browseFilePath').addEventListener('click', () => loadFiles(document.getElementById('filePath').value));
+document.getElementById('filePath').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') loadFiles(event.target.value);
+});
 
 document.getElementById('saveWifiConfig').addEventListener('click', saveWifiConfig);
-document.getElementById('saveSensorConfig').addEventListener('click', saveSensorConfig);
 document.getElementById('savePeerConfig').addEventListener('click', savePeerConfig);
-
-document.getElementById('triggerDelta').addEventListener('input', updateSliderValues);
 
 document.querySelectorAll('.calibrate-btn').forEach(btn => {
   btn.addEventListener('click', () => startSensorCalibration(btn.dataset.calTarget));
@@ -899,6 +1045,7 @@ loadNetworkConfig();
 Object.assign(globalThis, {
   loadStatus,
   loadRiders,
+  loadFiles,
   loadNetworkConfig,
   sendPeerCommand
 });

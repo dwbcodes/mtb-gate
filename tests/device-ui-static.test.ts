@@ -55,16 +55,41 @@ describe("device UI static contract", () => {
     assert.match(js, /applyRoleUi\(status\.role\)/);
   });
 
-  it("exposes baseline-relative sensor calibration instead of absolute threshold sliders", () => {
+  it("exposes a read-only LittleFS file browser under Monitor", () => {
+    const html = readUiFile("index.html");
+    const js = readUiFile("main.js");
+    const firmware = readFileSync(join(root, "firmware/gate/src/main.cpp"), "utf8");
+
+    assert.match(html, /data-page="files">Files<\/a>/);
+    assert.match(html, /id="page-files" class="page"/);
+    assert.match(html, /id="fileList"/);
+    assert.match(html, /id="fileViewer"/);
+    assert.match(js, /'files'/);
+    assert.match(js, /function loadFiles\(path = currentFilePath\)/);
+    assert.match(js, /\/api\/files\?path=/);
+    assert.match(js, /\/api\/files\/view\?path=/);
+    assert.match(firmware, /#include <LittleFS\.h>/);
+    assert.match(firmware, /void handleGetFiles\(\)/);
+    assert.match(firmware, /void handleGetFileView\(\)/);
+    assert.match(firmware, /server\.on\("\/api\/files", HTTP_GET, handleGetFiles\)/);
+    assert.match(firmware, /server\.on\("\/api\/files\/view", HTTP_GET, handleGetFileView\)/);
+    assert.doesNotMatch(firmware, /server\.on\("\/api\/files", HTTP_POST/);
+  });
+
+  it("keeps normal sensor calibration on auto calibration only", () => {
     const html = readUiFile("index.html");
     const js = readUiFile("main.js");
 
-    assert.match(html, /Trigger Delta Above Baseline/);
-    assert.match(html, /id="triggerDelta"/);
+    assert.match(html, /Auto Calibration/);
+    assert.match(html, /id="currentDelta"/);
+    assert.doesNotMatch(html, /Trigger Delta Above Baseline/);
+    assert.doesNotMatch(html, /id="triggerDelta"/);
+    assert.doesNotMatch(html, /id="saveSensorConfig"/);
     assert.doesNotMatch(html, /id="startThreshold"/);
     assert.doesNotMatch(html, /id="line2Threshold"/);
     assert.doesNotMatch(html, /id="finishThreshold"/);
-    assert.match(js, /triggerDelta: parseFloat\(document\.getElementById\('triggerDelta'\)\.value\)/);
+    assert.doesNotMatch(js, /function saveSensorConfig/);
+    assert.doesNotMatch(js, /document\.getElementById\('triggerDelta'\)/);
     assert.doesNotMatch(js, /document\.getElementById\('startThreshold'\)/);
     assert.doesNotMatch(js, /document\.getElementById\('line2Threshold'\)/);
     assert.doesNotMatch(js, /document\.getElementById\('finishThreshold'\)/);

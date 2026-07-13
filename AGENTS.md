@@ -114,7 +114,7 @@ Default USB_MATCH regex: `Espressif|USB JTAG|CDC ACM`; override with `make attac
    - Launch: Line 1 → Line 2 sensor (new dual-sensor support)
    - Course: Line 1 → Finish gate signal (via ESP-Now)
 5. **ESP-Now Inter-Gate Communication**: Finish gate sends finish events to start gate via low-latency messages (independent of Wi-Fi; supports distances up to ~250m)
-6. **Sensor Abstraction**: Pressure sensors (MPXV7002DP) abstracted in `sensor_gate.h` for mocking during dev; dual sensors on start gate (pins 2, 3)
+6. **Sensor Abstraction**: Pressure sensors (MPXV7002DP) abstracted in `sensor_gate.h` for mocking during dev; sensor on start gate GPIO0, bidirectional trigger detection (handles both positive and negative pressure signals)
 7. **Offline Ingest**: Runs captured locally; payloads idempotent and uploadable to AWS when network available
 8. **Wi-Fi** (Configuration & Cloud Sync): Each device:
    - AP SSID always equals the deviceId (`Gate-<#>-<mac>`); not user-configurable
@@ -130,6 +130,17 @@ Default USB_MATCH regex: `Espressif|USB JTAG|CDC ACM`; override with `make attac
 - **rider_store.h/cpp**: Persistent NVS rider registration (32-entry max), keyed by tagId
 - **nfc_reader.h/cpp**: NFC tag reader abstraction (mock in dev, real PN532 I2C in production)
 - **sensor_gate.h**: Sensor read abstraction; mock vs. real sensors can be swapped
+
+### Hardware Parts
+
+See `docs/parts/` for datasheets.
+
+| Part | Role | Notes |
+|---|---|---|
+| ESP32-C3 DevKit M1 | MCU (testing) | Will switch to ESP32 WROOM when available |
+| MPXV7002DP | Pressure sensor | Piezoresistive differential transducer, ±2 kPa range. Datasheet: `docs/parts/MPXV7002.pdf`. Output: Vout = Vs × (0.2P + 0.5). At 0 kPa with 5V supply: 2.5V. Top port (P1) connected to pressure tube. **Known issue**: I2C (NFC reader) corrupts ESP32-C3 ADC reads on the sensor pin — NFC I2C is disabled during active runs and calibration. |
+| PN532 | NFC reader | I2C on SDA=GPIO8, SCL=GPIO10. IRQ=GPIO6, RESET=GPIO7. Deferred init (2s after boot). Wire.end() called if not detected to prevent ADC interference. |
+| Buzzer | Audio feedback | GPIO5 via LEDC PWM. Countdown beeps, start tune, finish tone. |
 
 ### Cloud Sync Pattern
 
