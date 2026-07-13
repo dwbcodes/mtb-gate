@@ -2226,6 +2226,51 @@ void setup() {
   printStatus();
   printWifiStatus();
   printHelp();
+
+  // Auto-calibrate idle noise on boot (no press required).
+  // Samples sensor for ~2 seconds to establish noise floor, then sets
+  // triggerDelta to 3× noise range. A full calibration with press can
+  // refine this later.
+  GateLog::info("CAL", "Boot auto-calibration: sampling idle noise...");
+  Serial.flush();
+  float bootIdleMin = 9.0F, bootIdleMax = 0.0F, bootIdleSum = 0.0F;
+  int bootSamples = 0;
+  unsigned long bootCalStart = millis();
+  while (millis() - bootCalStart < 2000) {
+    float v = readSensorVoltage(SENSOR_LINE1_PIN);
+    if (v > 0.02F && v < 3.28F) {
+      if (v < bootIdleMin) bootIdleMin = v;
+      if (v > bootIdleMax) bootIdleMax = v;
+      bootIdleSum += v;
+      bootSamples++;
+    }
+    delay(2);
+  }
+  if (bootSamples > 0) {
+    float bootIdleAvg = bootIdleSum / bootSamples;
+    float noiseRange = bootIdleMax - bootIdleMin;
+    // Set delta to 3× noise range, with reasonable floor/ceiling
+    float bootDelta = noiseRange * 3.0F;
+    if (bootDelta < 0.10F) bootDelta = 0.10F;
+    if (bootDelta > 1.5F) bootDelta = 1.5F;
+    // Only apply if no prior calibration or if it improves on default
+    if (config.triggerDelta <= 0.0F || config.triggerDelta >= 1.5F) {
+      triggerDelta = bootDelta;
+      config.triggerDelta = bootDelta;
+      config = configStore.save(config);
+      GateLog::info("CAL", "Boot delta set to " + String(bootDelta, 2) + "V (noise=" + String(noiseRange, 2) + "V)");
+    } else {
+      GateLog::info("CAL", "Boot noise=" + String(noiseRange, 2) + "V, keeping saved delta=" + String(config.triggerDelta, 2) + "V");
+    }
+    // Seed baseline from boot idle average
+    for (int i = 0; i < BASELINE_SAMPLES; i++) {
+      baselineBuffer[i] = bootIdleAvg;
+    }
+    baselineFilled = true;
+    sensorAboveCount = 0;
+    GateLog::info("CAL", "Baseline=" + String(bootIdleAvg, 2) + "V thr=" + String(bootIdleAvg + triggerDelta, 2) + "V");
+    Serial.flush();
+  }
 }
 
 void loop() {
