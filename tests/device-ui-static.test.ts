@@ -55,6 +55,17 @@ describe("device UI static contract", () => {
     assert.match(js, /applyRoleUi\(status\.role\)/);
   });
 
+  it("shows network status at the top of the Network page", () => {
+    const html = readUiFile("index.html");
+    const networkPage = html.slice(html.indexOf('<div id="page-config-network"'));
+    const networkStatusIndex = networkPage.indexOf("<h2>Network Status</h2>");
+    const wifiConfigIndex = networkPage.indexOf("<h2>Wi-Fi Configuration</h2>");
+
+    assert.ok(networkStatusIndex >= 0);
+    assert.ok(wifiConfigIndex > networkStatusIndex);
+    assert.equal(html.match(/<h2>Network Status<\/h2>/g)?.length, 1);
+  });
+
   it("exposes a read-only LittleFS file browser under Monitor", () => {
     const html = readUiFile("index.html");
     const js = readUiFile("main.js");
