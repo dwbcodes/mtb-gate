@@ -20,9 +20,10 @@ public:
   void poll();  // Call from loop() to continuously scan during listen window
 
 private:
-  Adafruit_PN532* nfc_;
+  Adafruit_PN532* nfc_ = nullptr;
   bool initialized_ = false;
   String lastScannedTag_;
   bool tagScanned_ = false;
-  unsigned long listeningUntil_ = 0;
+  unsigned long listenStartMs_ = 0;
+  unsigned long listenDurationMs_ = 0;
 };

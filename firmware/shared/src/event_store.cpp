@@ -307,8 +307,6 @@ String EventStore::getRunsJson(int limit) {
     char pathBuf[64];
     snprintf(pathBuf, sizeof(pathBuf), "/events/session-%03d/runs.jsonl", sessions[s]);
     String path = String(pathBuf);
-    // Open "a" first to create if missing (avoids VFS error log), then read
-    { File touch = LittleFS.open(path, "a"); if (touch) touch.close(); }
     File f = LittleFS.open(path, "r");
     if (!f) continue;
 
@@ -322,24 +320,30 @@ String EventStore::getRunsJson(int limit) {
     }
     f.close();
 
-    // Tokenise lines in memory
+    // Tokenise lines into a ring buffer (keeps the last 50, not the first 50)
     String sessLines[50];
     int sessTotal = 0;
     int pos = 0;
-    while (pos < (int)content.length() && sessTotal < 50) {
+    while (pos < (int)content.length()) {
       int nl = content.indexOf('\n', pos);
       if (nl < 0) nl = content.length();
       if (nl > pos) {
         String line = content.substring(pos, nl);
         line.trim();
-        if (line.length() > 0) sessLines[sessTotal++] = line;
+        if (line.length() > 0) {
+          sessLines[sessTotal % 50] = line;
+          sessTotal++;
+        }
       }
       pos = nl + 1;
     }
 
-    // Add from newest (end) to oldest (start)
-    for (int i = sessTotal - 1; i >= 0 && collected < limit; i--) {
-      lines[collected++] = sessLines[i];
+    // Add from newest to oldest out of the ring buffer
+    int sessCount2 = sessTotal < 50 ? sessTotal : 50;
+    for (int i = 0; i < sessCount2 && collected < limit; i++) {
+      // newest is at (sessTotal - 1) % 50, walk backwards
+      int idx = ((sessTotal - 1 - i) % 50 + 50) % 50;
+      lines[collected++] = sessLines[idx];
     }
   }
 

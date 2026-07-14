@@ -712,7 +712,8 @@ async function saveWheelTrackConfig() {
 async function rebootDevice() {
   if (!confirm('Reboot the device? Settings will be preserved.')) return;
   try {
-    await fetch('/api/reboot', { method: 'POST' });
+    const response = await fetch('/api/reboot', { method: 'POST' });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
     alert('Device is rebooting...');
   } catch (err) {
     alert('Error: ' + err.message);
@@ -723,7 +724,8 @@ async function factoryReset() {
   if (!confirm('Factory reset will erase ALL settings and riders. This cannot be undone. Continue?')) return;
   if (!confirm('Really? This will erase everything.')) return;
   try {
-    await fetch('/api/factory-reset', { method: 'POST' });
+    const response = await fetch('/api/factory-reset', { method: 'POST' });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
     alert('Device is factory resetting...');
   } catch (err) {
     alert('Error: ' + err.message);

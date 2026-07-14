@@ -108,8 +108,8 @@ enum class EspNowMsgType : uint8_t {
 
 struct __attribute__((packed)) EspNowPayload {
   EspNowMsgType type;
-  unsigned long timestampMs;   // primary timestamp
-  unsigned long timestampMs2;  // secondary (used for sync)
+  uint32_t timestampMs;   // primary timestamp
+  uint32_t timestampMs2;  // secondary (used for sync)
 };
 
 // Rider sync message — one rider per ESP-Now frame (max 250 bytes)
@@ -124,14 +124,14 @@ struct __attribute__((packed)) RiderSyncMsg {
 struct __attribute__((packed)) RiderSyncAckMsg {
   EspNowMsgType type;          // RiderSyncAck
   uint8_t totalCount;          // applied rider count
-  unsigned long checksum;      // checksum of applied wire-format rider roster
+  uint32_t checksum;           // checksum of applied wire-format rider roster
 };
 
 struct __attribute__((packed)) ClockSyncAckMsg {
   EspNowMsgType type;             // ClockSyncAck
-  long appliedOffsetMs;           // peer offset applied after SyncConfirm
-  unsigned long peerCorrectedMs;  // peer millis() + appliedOffsetMs at send time
-  unsigned long rttMs;            // RTT measured by the start gate
+  int32_t appliedOffsetMs;        // peer offset applied after SyncConfirm
+  uint32_t peerCorrectedMs;       // peer millis() + appliedOffsetMs at send time
+  uint32_t rttMs;                 // RTT measured by the start gate
 };
 
 uint8_t peerMacBytes[6] = {0};
@@ -144,11 +144,11 @@ constexpr unsigned long CLOCK_SYNC_ACCEPTABLE_DIFF_MS = 25;
 constexpr unsigned long RIDER_SYNC_ACK_TIMEOUT_MS = 1500;
 unsigned long pendingRiderSyncStartedAtMs = 0;
 uint8_t pendingRiderSyncTotal = 0;
-unsigned long pendingRiderSyncChecksum = 0;
+uint32_t pendingRiderSyncChecksum = 0;
 bool pendingRiderSyncValidated = false;
 String lastRiderSyncAckMac = "";
 uint8_t lastRiderSyncAckTotal = 0;
-unsigned long lastRiderSyncAckChecksum = 0;
+uint32_t lastRiderSyncAckChecksum = 0;
 unsigned long lastRiderSyncAckAtMs = 0;
 
 // Clock sync state
@@ -559,7 +559,7 @@ void sendPing() {
   sendEspNowMsg(EspNowMsgType::Ping, BROADCAST_MAC, millis(), (unsigned long)config.wifiChannel);
 }
 
-void checksumAppend(unsigned long& hash, const char* value, size_t maxLen) {
+void checksumAppend(uint32_t& hash, const char* value, size_t maxLen) {
   for (size_t i = 0; i < maxLen && value[i] != '\0'; i++) {
     hash ^= (uint8_t)value[i];
     hash *= 16777619UL;
@@ -568,8 +568,8 @@ void checksumAppend(unsigned long& hash, const char* value, size_t maxLen) {
   hash *= 16777619UL;
 }
 
-unsigned long riderRosterChecksum() {
-  unsigned long hash = 2166136261UL;
+uint32_t riderRosterChecksum() {
+  uint32_t hash = 2166136261UL;
   uint8_t total = (uint8_t)riderStore.count();
   hash ^= total;
   hash *= 16777619UL;
@@ -940,7 +940,7 @@ bool hasStaConnection() {
 }
 
 void printHelp() {
-  GateLog::print("Commands: status | role=start | role=finish | wifi | calibrate");
+  GateLog::print("Commands: status | wifi | calibrate | adc | reboot | scan=<tagId>");
   GateLog::print("Console API: api status | api config | api config/wifi <json> | api config/time <json> | api config/mac <json> | api riders | api riders/add <json> | api riders/delete <json> | api ping");
 }
 
@@ -1130,7 +1130,9 @@ void printApiResponse(const String& payload) {
 }
 
 bool payloadHasError(const String& payload) {
-  return payload.indexOf("\"error\"") >= 0;
+  // Check that the payload starts with {"error": to avoid false positives
+  // from payloads that happen to contain the word "error" in a value field.
+  return payload.startsWith(R"({"error":)") || payload.startsWith(R"({"error" :)");
 }
 
 void sendJson(int statusCode, const String& payload) {
@@ -1285,8 +1287,11 @@ String updateMacConfigFromJson(const String& body) {
                    : (next.gateNumber == 12) ? "Gate Finish"
                    : "Gate " + String(next.gateNumber);
 
-  if (next.peerMac.length() > 0 && next.peerMac.length() != 17) {
-    return R"({"error":"peerMac must be AA:BB:CC:DD:EE:FF format"})";
+  if (next.peerMac.length() > 0) {
+    uint8_t tmp[6];
+    if (!parseMac(next.peerMac, tmp)) {
+      return R"({"error":"peerMac must be AA:BB:CC:DD:EE:FF format"})";
+    }
   }
 
   config = configStore.save(next);
@@ -1494,6 +1499,21 @@ void handlePostReboot() {
   ESP.restart();
 }
 
+void handlePostFactoryReset() {
+  sendJson(200, R"({"ok":true,"message":"Factory reset in progress"})");
+  GateLog::info("RESET", "Factory reset requested via API");
+  delay(500);
+
+  // Clear config NVS namespace
+  { Preferences prefs; prefs.begin("mtb-gate", false); prefs.clear(); prefs.end(); }
+  // Clear riders NVS namespace
+  { Preferences prefs; prefs.begin("riders", false); prefs.clear(); prefs.end(); }
+  // Wipe LittleFS (events, sessions, rider exports)
+  LittleFS.format();
+
+  ESP.restart();
+}
+
 void handlePostPing() {
   sendEmptyBodyOperation(HTTP_POST, pingJson);
 }
@@ -1673,6 +1693,10 @@ void handleNfcStartListen() {
     server.send(405, "application/json", R"({"error":"Method not allowed"})");
     return;
   }
+  if (activeRunId.length() > 0) {
+    sendJsonError(409, "NFC unavailable during active run");
+    return;
+  }
 
   // Initialize NFC reader on first use (lazy init)
   if (!nfcReader.isInitialized()) {
@@ -1697,63 +1721,69 @@ void handleNfcGetTag() {
   
   // Check for scanned tag
   String tagId;
+  JsonDocument doc;
   if (nfcReader.getScannedTag(tagId)) {
     lastScannedNfcTag = tagId;
-    String response = R"({"ok":true,"tagId":")" + tagId + R"("})";
-    server.send(200, "application/json", response);
+    doc["ok"] = true;
+    doc["tagId"] = tagId;
   } else {
-    server.send(200, "application/json", R"({"ok":false,"tagId":null})");
+    doc["ok"] = false;
+    doc["tagId"] = nullptr;
   }
+  String payload;
+  serializeJson(doc, payload);
+  server.send(200, "application/json", payload);
 }
 
 
 void handleNfcDiagnostics() {
+  if (activeRunId.length() > 0) {
+    sendJsonError(409, "NFC unavailable during active run");
+    return;
+  }
+
   // Try to initialize NFC reader if not yet initialized
   if (!nfcReader.isInitialized()) {
     nfcReader.begin();
   }
 
-  String payload = "{";
-  payload += R"("initialized":)" + String(nfcReader.isInitialized() ? "true" : "false") + ",";
-  payload += R"("message":")";
+  JsonDocument doc;
+  doc["initialized"] = nfcReader.isInitialized();
+  doc["message"] = nfcReader.isInitialized()
+    ? "NFC reader initialized successfully"
+    : "NFC reader not detected or not initialized. Check power and I2C wiring: SDA=GPIO8 (pin 5), SCL=GPIO10 (pin 4), GND, 3.3V";
 
-  if (nfcReader.isInitialized()) {
-    payload += "NFC reader initialized successfully";
-  } else {
-    payload += "NFC reader not detected or not initialized. Check power and I2C wiring: SDA=GPIO8 (pin 5), SCL=GPIO10 (pin 4), GND, 3.3V";
-  }
-
-  payload += R"(")";
-  payload += "}";
+  String payload;
+  serializeJson(doc, payload);
   server.send(200, "application/json", payload);
 }
 
 
 void handleI2cScan() {
-  String response = R"({"devices":[)";
-  bool found = false;
-  
-  // Scan I2C addresses 0x00-0x7F
+  if (activeRunId.length() > 0) {
+    sendJsonError(409, "I2C scan unavailable during active run");
+    return;
+  }
+
+  JsonDocument doc;
+  JsonArray devices = doc["devices"].to<JsonArray>();
+
   for (uint8_t addr = 1; addr < 127; addr++) {
     Wire.beginTransmission(addr);
-    uint8_t error = Wire.endTransmission();
-    
-    if (error == 0) {  // Device found
-      if (found) response += ",";
-      response += "0x" + String(addr, HEX);
-      found = true;
+    if (Wire.endTransmission() == 0) {
+      char hex[7];
+      snprintf(hex, sizeof(hex), "0x%02x", addr);
+      devices.add(hex);
     }
   }
-  
-  response += R"(],"message":")";
-  if (found) {
-    response += "Found I2C device(s). If PN532 uses 0x24, it should be detected.";
-  } else {
-    response += "No I2C devices found! Check power, GND, SDA/SCL connections.";
-  }
-  response += R"("})";
-  
-  server.send(200, "application/json", response);
+
+  doc["message"] = devices.size() > 0
+    ? "Found I2C device(s). If PN532 uses 0x24, it should be detected."
+    : "No I2C devices found! Check power, GND, SDA/SCL connections.";
+
+  String payload;
+  serializeJson(doc, payload);
+  server.send(200, "application/json", payload);
 }
 
 
@@ -2137,7 +2167,8 @@ void configureWebServer() {
 
   server.on("/api/peer/riders/sync", HTTP_POST, handlePostPeerRidersSync);
   server.on("/api/reboot", HTTP_POST, handlePostReboot);
-  
+  server.on("/api/factory-reset", HTTP_POST, handlePostFactoryReset);
+
   // Event/storage endpoints
   server.on("/api/results", HTTP_GET, handleGetResults);
   server.on("/api/results", HTTP_POST, handlePostResults);
@@ -2225,24 +2256,6 @@ void handleSerialCommand(const String& rawCommand) {
 
   if (command.equalsIgnoreCase("status")) {
     printStatus();
-    return;
-  }
-
-  if (command.equalsIgnoreCase("role=start")) {
-    config.role = GateRole::Start;
-    config = configStore.save(config);
-    GateLog::print("Saved role=start. Rebooting...");
-    delay(500);
-    ESP.restart();
-    return;
-  }
-
-  if (command.equalsIgnoreCase("role=finish")) {
-    config.role = GateRole::Finish;
-    config = configStore.save(config);
-    GateLog::print("Saved role=finish. Rebooting...");
-    delay(500);
-    ESP.restart();
     return;
   }
 

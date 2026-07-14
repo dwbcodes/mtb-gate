@@ -24,6 +24,7 @@ void NfcReader::begin() {
   }
   yield();
 
+  delete nfc_;
   nfc_ = new Adafruit_PN532(PN532_IRQ, PN532_RESET);
   yield();
 
@@ -77,15 +78,16 @@ bool NfcReader::readTag(String& outTagId) {
 }
 
 void NfcReader::startListening(unsigned long timeoutMs) {
-  listeningUntil_ = millis() + timeoutMs;
+  listenStartMs_ = millis();
+  listenDurationMs_ = timeoutMs;
   tagScanned_ = false;
 }
 
 bool NfcReader::getScannedTag(String& outTagId) {
   if (!initialized_) return false;
 
-  // Check if listening timeout expired
-  if (millis() > listeningUntil_) {
+  // Check if listening timeout expired (rollover-safe)
+  if (millis() - listenStartMs_ >= listenDurationMs_) {
     return false;
   }
 
@@ -105,7 +107,7 @@ bool NfcReader::getScannedTag(String& outTagId) {
 }
 
 void NfcReader::poll() {
-  if (!initialized_ || tagScanned_ || millis() > listeningUntil_) return;
+  if (!initialized_ || tagScanned_ || (millis() - listenStartMs_ >= listenDurationMs_)) return;
   String tagId;
   readTag(tagId);  // result cached in lastScannedTag_/tagScanned_ if found
 }
