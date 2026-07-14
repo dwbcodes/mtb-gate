@@ -173,6 +173,30 @@ export function withUpdatedAttempt(attempt: AttemptRecord, patch: Partial<Attemp
   return next;
 }
 
+/** Validate a raw parsed object as a DeviceUploadEnvelope.
+ *  Returns the typed envelope on success, or a string describing the first invalid field. */
+export function validateEnvelope(raw: unknown): DeviceUploadEnvelope | string {
+  if (raw == null || typeof raw !== "object") return "envelope must be an object";
+  const obj = raw as Record<string, unknown>;
+
+  if (typeof obj.runId !== "string" || obj.runId.length === 0) return "runId is required";
+
+  const attempt = obj.attempt;
+  if (attempt == null || typeof attempt !== "object") return "attempt is required";
+  const att = attempt as Record<string, unknown>;
+
+  if (typeof att.riderId !== "string" || att.riderId.length === 0) return "attempt.riderId is required";
+  if (typeof att.riderName !== "string") return "attempt.riderName is required";
+  if (typeof att.tagId !== "string") return "attempt.tagId is required";
+  if (typeof att.queuedAt !== "string" || att.queuedAt.length === 0) return "attempt.queuedAt is required";
+  if (typeof att.sessionDate !== "string" || att.sessionDate.length === 0) return "attempt.sessionDate is required";
+
+  const metrics = att.metrics;
+  if (metrics == null || typeof metrics !== "object") return "attempt.metrics is required";
+
+  return obj as unknown as DeviceUploadEnvelope;
+}
+
 function diffMs(startAt: string | null, endAt: string | null): number | null {
   if (!startAt || !endAt) {
     return null;

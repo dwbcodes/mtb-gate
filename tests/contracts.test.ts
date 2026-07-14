@@ -4,7 +4,7 @@ import {
   buildAttemptRecord,
   computeMetrics,
   createRunId
-} from "../packages/contracts/src/index.ts";
+} from "@mtb-gate/contracts";
 
 test("createRunId is deterministic for rider and timestamp", () => {
   const runId = createRunId({

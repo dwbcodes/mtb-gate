@@ -8,7 +8,7 @@ import {
   type Rider,
   toSessionDate,
   withUpdatedAttempt
-} from "../../contracts/src/index.ts";
+} from "@mtb-gate/contracts";
 
 // Deterministic in-memory model of a practice session: drive runs through
 // the same lifecycle the start gate does (queue -> countdown -> go ->

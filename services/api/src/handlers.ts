@@ -1,7 +1,8 @@
 // Transport-agnostic HTTP handlers for the cloud sync API, written
 // against plain (statusCode, headers, body) tuples so the same functions
 // serve the local dev server today and a Lambda adapter later.
-import type { DailyResultsResponse, DeviceUploadEnvelope } from "../../../packages/contracts/src/index.ts";
+import type { DailyResultsResponse } from "@mtb-gate/contracts";
+import { validateEnvelope } from "@mtb-gate/contracts";
 import type { AttemptStore } from "./store.ts";
 
 export interface HttpResponse {
@@ -22,14 +23,16 @@ export function createJsonResponse(statusCode: number, body: unknown): HttpRespo
 }
 
 export async function postAttempts(requestBody: string, store: AttemptStore): Promise<HttpResponse> {
-  let envelope: DeviceUploadEnvelope;
+  let parsed: unknown;
   try {
-    envelope = JSON.parse(requestBody) as DeviceUploadEnvelope;
+    parsed = JSON.parse(requestBody);
   } catch {
     return createJsonResponse(400, { error: "Invalid JSON" });
   }
-  if (!envelope.runId || !envelope.attempt?.riderId) {
-    return createJsonResponse(400, { error: "Invalid attempt payload" });
+
+  const envelope = validateEnvelope(parsed);
+  if (typeof envelope === "string") {
+    return createJsonResponse(400, { error: envelope });
   }
 
   const result = store.ingest(envelope);

@@ -1,4 +1,4 @@
-import type { AttemptRecord, DeviceUploadEnvelope, ResultsQuery, Rider, RosterResponse } from "../../../packages/contracts/src/index.ts";
+import type { AttemptRecord, DeviceUploadEnvelope, ResultsQuery, Rider, RosterResponse } from "@mtb-gate/contracts";
 
 // Storage port for the sync API. ingest() must be idempotent on runId —
 // devices retry uploads, so a duplicate envelope returns the stored
