@@ -20,8 +20,8 @@ These facts are frequently gotten wrong by stale docs and training priors. Trust
 - `docs/README.md` — documentation index
 - `docs/API.md` — REST API reference with the complete route table; per-endpoint detail in `docs/API_*.md`; `docs/CURL_EXAMPLES.md` for recipes
 - `docs/openapi.yaml` — OpenAPI spec. `docs/openapi.json` is **generated from it**; edit the YAML, then regenerate: `python3 -c "import yaml, json; json.dump(yaml.safe_load(open('docs/openapi.yaml')), open('docs/openapi.json','w'), indent=2)"`
-- `docs/RIDER_REGISTRATION.md`, `docs/NFC_TROUBLESHOOTING.md`, `docs/BUZZER.md` — user/hardware guides; `docs/parts/` — datasheets
-- **Embedded docs**: `docs/API*.md`, `docs/CURL_EXAMPLES.md`, and `docs/openapi.json` are gzipped into the firmware image by `scripts/embed-device-ui.mjs` (run automatically by `make build`/`make upload`) and served by the gate under `/docs/...` — keep them lean; a doc edit only reaches devices after re-embed + flash
+- `docs/USER_GUIDE.md` — end-user guide rendered on the device UI's Monitor → User Guide page; `docs/RIDER_REGISTRATION.md`, `docs/NFC_TROUBLESHOOTING.md`, `docs/BUZZER.md` — user/hardware guides; `docs/parts/` — datasheets
+- **Embedded docs**: `docs/API*.md`, `docs/CURL_EXAMPLES.md`, `docs/USER_GUIDE.md`, and `docs/openapi.json` are gzipped into the firmware image by `scripts/embed-device-ui.mjs` (run automatically by `make build`/`make upload`) and served by the gate under `/docs/...` — keep them lean; a doc edit only reaches devices after re-embed + flash
 - `tests/device-ui-static.test.ts` asserts which doc paths the device UI links to — update it if embedded doc filenames change
 
 ## Project Overview
@@ -180,9 +180,10 @@ See `docs/parts/` for datasheets.
 ### Device UI
 
 - **Device UI** (`apps/device-ui/`): Captive portal static SPA served by the gate at its AP IP
-  - Side navigation layout with two sections: Monitor (Results, Riders) and Configuration (Network, Gate Config, Reset) and Developer (API Docs, Peer Tools)
-  - Hash-based client-side routing (`#results`, `#riders`, `#config-network`, `#config-gate`, `#config-reset`, `#docs`, `#peer-tools`)
+  - Side navigation layout with three sections: Monitor (Results, Riders, Files, User Guide), Configuration (Network, Gate Config, Reset) and Developer (API Docs, Peer Tools)
+  - Hash-based client-side routing (`#results`, `#riders`, `#files`, `#guide`, `#config-network`, `#config-gate`, `#config-reset`, `#docs`, `#peer-tools`)
   - **Results** (home): Recent attempts with 3 timing metrics, network status grid, connected-gates info for non-start gates
+  - **User Guide**: End-user setup/session guide rendered from embedded `docs/USER_GUIDE.md`
   - **Riders**: NFC registration panel (15s listen window, prompt for display name), registered riders list
   - **Network**: AP SSID (read-only, always = deviceId), AP password, station SSID/password, Wi-Fi channel
   - **Gate Config**: Gate number dropdown (1=Start, 2–11=Intermediate, 12=Finish), peer MAC, sensor thresholds

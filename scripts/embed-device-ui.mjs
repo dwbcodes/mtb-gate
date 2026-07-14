@@ -27,7 +27,8 @@ const assets = [
   ["docs_api_config_md", docsDir, "API_CONFIG.md"],
   ["docs_api_wifi_md", docsDir, "API_WIFI.md"],
   ["docs_api_time_md", docsDir, "API_TIME.md"],
-  ["docs_api_mac_md", docsDir, "API_MAC.md"]
+  ["docs_api_mac_md", docsDir, "API_MAC.md"],
+  ["docs_user_guide_md", docsDir, "USER_GUIDE.md"]
 ];
 
 function minifyText(file, content) {

@@ -5,7 +5,7 @@
 // get a reduced nav (see pageRequiresStart/applyRoleUi).
 
 // PAGE NAVIGATION (hash-based)
-const PAGES = ['results', 'riders', 'files', 'config-network', 'config-gate', 'config-reset', 'docs', 'peer-tools'];
+const PAGES = ['results', 'riders', 'files', 'guide', 'config-network', 'config-gate', 'config-reset', 'docs', 'peer-tools'];
 let currentRole = null;
 let currentFilePath = '/';
 // Wall-clock epoch of the device's boot: Date.now() - status.uptimeMs
@@ -45,6 +45,8 @@ function navigateTo(page) {
     loadSelectedDoc();
   } else if (page === 'files') {
     loadFiles(currentFilePath);
+  } else if (page === 'guide') {
+    loadUserGuide();
   }
 }
 
@@ -806,6 +808,30 @@ async function restoreConfig(file) {
     }
   } catch (err) {
     msgEl.textContent = 'Error: ' + err.message;
+  }
+}
+
+// USER GUIDE PAGE
+let userGuideLoaded = false;
+
+async function loadUserGuide() {
+  if (userGuideLoaded) return;
+
+  const statusEl = document.getElementById('guideStatus');
+  const contentEl = document.getElementById('guideContent');
+  statusEl.textContent = 'Loading...';
+
+  try {
+    const response = await fetch(contentEl.dataset.docUrl);
+    if (!response.ok) {
+      throw new Error('HTTP ' + response.status + ' ' + response.statusText);
+    }
+    contentEl.innerHTML = renderMarkdown(await response.text());
+    statusEl.textContent = '';
+    userGuideLoaded = true;
+  } catch (err) {
+    statusEl.textContent = 'Error';
+    contentEl.textContent = 'Failed to load the user guide: ' + err.message;
   }
 }
 

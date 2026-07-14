@@ -1405,6 +1405,7 @@ void handleDocsApiConfig() { sendMarkdownDoc(docs_api_config_md_data, sizeof(doc
 void handleDocsApiWifi() { sendMarkdownDoc(docs_api_wifi_md_data, sizeof(docs_api_wifi_md_data)); }
 void handleDocsApiTime() { sendMarkdownDoc(docs_api_time_md_data, sizeof(docs_api_time_md_data)); }
 void handleDocsApiMac() { sendMarkdownDoc(docs_api_mac_md_data, sizeof(docs_api_mac_md_data)); }
+void handleDocsUserGuide() { sendMarkdownDoc(docs_user_guide_md_data, sizeof(docs_user_guide_md_data)); }
 
 void handleDocsOpenApiJson() {
   sendCompressedAsset(200, "application/json; charset=utf-8", docs_openapi_json_data, docs_openapi_json_len);
@@ -2115,6 +2116,7 @@ void configureWebServer() {
   server.on("/docs/API_WIFI.md", HTTP_GET, handleDocsApiWifi);
   server.on("/docs/API_TIME.md", HTTP_GET, handleDocsApiTime);
   server.on("/docs/API_MAC.md", HTTP_GET, handleDocsApiMac);
+  server.on("/docs/USER_GUIDE.md", HTTP_GET, handleDocsUserGuide);
 
   // REST API endpoints
   server.on("/api/status", HTTP_GET, handleStatusApi);

@@ -26,6 +26,7 @@
             <a href="#results" class="nav-link active" data-page="results">Results</a>
             <a href="#riders" class="nav-link" data-page="riders" data-start-only>Riders</a>
             <a href="#files" class="nav-link" data-page="files">Files</a>
+            <a href="#guide" class="nav-link" data-page="guide">User Guide</a>
           </div>
           <div class="nav-group">
             <div class="nav-heading">Configuration</div>
@@ -112,6 +113,19 @@
               <span id="fileViewerMeta" class="muted-mono">No file selected</span>
             </div>
             <pre id="fileViewer" class="file-viewer">Select a file to view its contents.</pre>
+          </section>
+        </div>
+
+        <!-- USER GUIDE PAGE -->
+        <div id="page-guide" class="page">
+          <section class="card">
+            <article class="doc-viewer" aria-live="polite">
+              <div class="section-head">
+                <h2>User Guide</h2>
+                <span id="guideStatus">Loading...</span>
+              </div>
+              <div id="guideContent" class="doc-content" data-doc-url="/docs/USER_GUIDE.md"></div>
+            </article>
           </section>
         </div>
 

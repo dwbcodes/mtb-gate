@@ -87,6 +87,23 @@ describe("device UI static contract", () => {
     assert.doesNotMatch(firmware, /server\.on\("\/api\/files", HTTP_POST/);
   });
 
+  it("serves an embedded user guide page under Monitor", () => {
+    const html = readUiFile("index.html");
+    const js = readUiFile("main.js");
+    const firmware = readFileSync(join(root, "firmware/gate/src/main.cpp"), "utf8");
+    const embed = readFileSync(join(root, "scripts/embed-device-ui.mjs"), "utf8");
+
+    const monitorGroup = html.slice(html.indexOf('<div class="nav-heading">Monitor</div>'), html.indexOf('<div class="nav-heading">Configuration</div>'));
+    assert.match(monitorGroup, /data-page="guide">User Guide<\/a>/);
+    assert.match(html, /id="page-guide" class="page"/);
+    assert.match(html, /id="guideContent" class="doc-content" data-doc-url="\/docs\/USER_GUIDE\.md"/);
+    assert.doesNotMatch(html, /id="page-guide" class="page" data-start-only/);
+    assert.match(js, /'guide'/);
+    assert.match(js, /function loadUserGuide\(\)/);
+    assert.match(embed, /\["docs_user_guide_md", docsDir, "USER_GUIDE\.md"\]/);
+    assert.match(firmware, /server\.on\("\/docs\/USER_GUIDE\.md", HTTP_GET, handleDocsUserGuide\)/);
+  });
+
   it("keeps browser calibration retired while preserving trigger delta config", () => {
     const html = readUiFile("index.html");
     const js = readUiFile("main.js");
@@ -172,6 +189,7 @@ describe("device UI static contract", () => {
       "/docs/API_TIME.md",
       "/docs/API_WIFI.md",
       "/docs/CURL_EXAMPLES.md",
+      "/docs/USER_GUIDE.md",
       "/docs/openapi.json"
     ].sort());
     assert.doesNotMatch(html, /openapi\.yaml/);
