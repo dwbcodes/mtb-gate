@@ -36,7 +36,7 @@ export function renderMetrics(metrics) {
     metricCard("Completed Runs", String(metrics.completedAttempts), `${metrics.pendingAttempts} pending / timed out`),
     metricCard("Best Time", metrics.bestTime, metrics.bestRider),
     metricCard("Average Time", metrics.averageTotal, "Across completed runs"),
-    metricCard("Average Reaction", metrics.averageReaction, "Launch to tube trigger")
+    metricCard("Average Reaction", metrics.averageReaction, "GO signal to sensor trigger")
   ].join("");
 }
 

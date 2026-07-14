@@ -140,8 +140,9 @@ void EventStore::logEvent(const String& type, const String& runId,
                           long clockOffsetMs) {
   if (!mounted_) return;
 
+  const uint32_t nextSeq = seq_ + 1;  // capture before nextEventId() increments seq_
   JsonDocument doc;
-  doc["seq"] = seq_ + 1;  // will be incremented by nextEventId
+  doc["seq"] = nextSeq;
   doc["eventId"] = nextEventId();
   doc["type"] = type;
   if (runId.length() > 0) doc["runId"] = runId;
@@ -267,11 +268,8 @@ String EventStore::getEventsJson(int limit) {
   return tailJsonl(sessionDir_ + "/events.jsonl", limit);
 }
 
-String EventStore::getRunsJson(int limit) {
-  if (!mounted_) return "[]";
-  if (limit > 50) limit = 50;
-
-  // Rebuild session cache if stale
+int EventStore::listSessions(int* out, int max, bool descending) {
+  // Rebuild cache if stale
   if (cachedSessionCount_ < 0) {
     cachedSessionCount_ = 0;
     File eventsDir = LittleFS.open("/events");
@@ -287,7 +285,7 @@ String EventStore::getRunsJson(int limit) {
         entry = eventsDir.openNextFile();
       }
     }
-    // Sort descending (newest first)
+    // Sort descending (newest first) as the default cached order
     for (int i = 0; i < cachedSessionCount_ - 1; i++)
       for (int j = i + 1; j < cachedSessionCount_; j++)
         if (cachedSessions_[j] > cachedSessions_[i]) {
@@ -296,8 +294,24 @@ String EventStore::getRunsJson(int limit) {
           cachedSessions_[j] = tmp;
         }
   }
-  int sessCount = cachedSessionCount_;
-  int* sessions = cachedSessions_;
+
+  int count = cachedSessionCount_ < max ? cachedSessionCount_ : max;
+  if (descending) {
+    // Cache is already descending
+    for (int i = 0; i < count; i++) out[i] = cachedSessions_[i];
+  } else {
+    // Copy in reverse for ascending
+    for (int i = 0; i < count; i++) out[i] = cachedSessions_[cachedSessionCount_ - 1 - i];
+  }
+  return count;
+}
+
+String EventStore::getRunsJson(int limit) {
+  if (!mounted_) return "[]";
+  if (limit > 50) limit = 50;
+
+  int sessions[100];
+  int sessCount = listSessions(sessions, 100, true);
 
   // Read runs from sessions newest-first until we have enough
   String lines[50];
@@ -450,37 +464,10 @@ String EventStore::getSessionFile(int sessionNum, const String& filename) {
 void EventStore::pruneOldSessions(size_t keepCount) {
   if (!mounted_) return;
 
-  File eventsDir = LittleFS.open("/events");
-  if (!eventsDir || !eventsDir.isDirectory()) return;
-
-  // Collect session numbers
   int sessions[100];
-  int count = 0;
-
-  File entry = eventsDir.openNextFile();
-  while (entry && count < 100) {
-    if (entry.isDirectory()) {
-      String name = String(entry.name());
-      int dashIdx = name.lastIndexOf('-');
-      if (dashIdx >= 0) {
-        sessions[count++] = name.substring(dashIdx + 1).toInt();
-      }
-    }
-    entry = eventsDir.openNextFile();
-  }
+  int count = listSessions(sessions, 100, false);  // ascending
 
   if ((size_t)count <= keepCount) return;
-
-  // Sort ascending
-  for (int i = 0; i < count - 1; i++) {
-    for (int j = i + 1; j < count; j++) {
-      if (sessions[j] < sessions[i]) {
-        int tmp = sessions[i];
-        sessions[i] = sessions[j];
-        sessions[j] = tmp;
-      }
-    }
-  }
 
   // Delete oldest sessions (keep last keepCount)
   int toDelete = count - (int)keepCount;
@@ -528,21 +515,8 @@ void EventStore::clearAllRuns() {
 bool EventStore::deleteRun(const String& runId) {
   if (!mounted_ || runId.length() == 0) return false;
 
-  // Collect session numbers
   int sessions[100];
-  int sessCount = 0;
-  File eventsDir = LittleFS.open("/events");
-  if (eventsDir && eventsDir.isDirectory()) {
-    File entry = eventsDir.openNextFile();
-    while (entry && sessCount < 100) {
-      if (entry.isDirectory()) {
-        String name = String(entry.name());
-        int dashIdx = name.lastIndexOf('-');
-        if (dashIdx >= 0) sessions[sessCount++] = name.substring(dashIdx + 1).toInt();
-      }
-      entry = eventsDir.openNextFile();
-    }
-  }
+  int sessCount = listSessions(sessions, 100, true);
 
   for (int s = 0; s < sessCount; s++) {
     char pathBuf[64];
@@ -551,27 +525,51 @@ bool EventStore::deleteRun(const String& runId) {
     File f = LittleFS.open(path, "r");
     if (!f) continue;
 
-    // Read all lines, skip the one matching runId
-    String kept = "";
-    bool found = false;
+    // Read file in 512-byte chunks
+    String content;
+    content.reserve(f.size());
+    uint8_t buf[512];
     while (f.available()) {
-      String line = f.readStringUntil('\n');
-      line.trim();
-      if (line.length() == 0) continue;
-      if (line.indexOf("\"" + runId + "\"") >= 0) {
-        found = true;
-        continue;
-      }
-      kept += line + "\n";
+      size_t got = f.read(buf, sizeof(buf));
+      content.concat((const char*)buf, got);
     }
     f.close();
 
+    // Parse lines, match runId by JSON key, write kept lines to temp file
+    String tmpPath = path + ".tmp";
+    bool found = false;
+    File out = LittleFS.open(tmpPath, "w");
+    if (!out) continue;
+
+    int pos = 0;
+    while (pos < (int)content.length()) {
+      int nl = content.indexOf('\n', pos);
+      if (nl < 0) nl = content.length();
+      if (nl > pos) {
+        String line = content.substring(pos, nl);
+        line.trim();
+        if (line.length() > 0) {
+          // Parse just the runId key to match precisely
+          JsonDocument lineDoc;
+          DeserializationError err = deserializeJson(lineDoc, line);
+          if (!err && lineDoc["runId"].as<String>() == runId) {
+            found = true;
+          } else {
+            out.println(line);
+          }
+        }
+      }
+      pos = nl + 1;
+    }
+    out.close();
+
     if (found) {
-      File out = LittleFS.open(path, "w");
-      if (out) { out.print(kept); out.close(); }
+      LittleFS.remove(path);
+      LittleFS.rename(tmpPath, path);
       GateLog::info("EVENTS", "Deleted run " + runId);
       return true;
     }
+    LittleFS.remove(tmpPath);
   }
   return false;
 }

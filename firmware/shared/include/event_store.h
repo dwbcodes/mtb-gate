@@ -60,6 +60,11 @@ private:
   // Tail reading helper: returns last N lines from a JSONL file wrapped in JSON array
   String tailJsonl(const String& path, int limit);
 
+  // Session enumeration: fills `out` with up to `max` session numbers, returns count.
+  // When `descending` is true, sorts newest-first; otherwise ascending.
+  // Uses cachedSessions_ when available.
+  int listSessions(int* out, int max, bool descending = true);
+
   int cachedSessions_[100];
-  int cachedSessionCount_ = -1;  // -1 = stale; rebuild on next getRunsJson() call
+  int cachedSessionCount_ = -1;  // -1 = stale; rebuild on next call
 };

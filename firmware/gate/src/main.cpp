@@ -1532,7 +1532,11 @@ void handlePostPeerPing() {
 }
 
 void handlePostPeerTest() {
-  if (!requireEspNowForPeerCommand()) return;
+  if (server.method() != HTTP_POST) {
+    sendJsonError(405, "Method not allowed");
+    return;
+  }
+  if (!requireStartGateForPeerCommand() || !requireEspNowForPeerCommand()) return;
   // Send sync request and return current connectivity state
   if (espNowReady) {
     sendSyncRequest();
