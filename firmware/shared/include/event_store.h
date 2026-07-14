@@ -30,7 +30,7 @@ public:
   String getRunsJson(int limit = 50);
   String getStorageJson();
   String getSessionsJson();
-  String getSessionFile(int sessionNum, const String& filename);
+
 
   // Run management
   bool deleteRun(const String& runId);

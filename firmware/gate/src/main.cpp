@@ -2121,14 +2121,18 @@ void handleGetSessionFile() {
     return;
   }
 
-  String content = eventStore.getSessionFile(num, filename);
-  if (content.length() == 0) {
+  // Stream file directly from LittleFS — avoids buffering entire file in RAM
+  char pathBuf[64];
+  snprintf(pathBuf, sizeof(pathBuf), "/events/session-%03d/%s", num, filename.c_str());
+  File f = LittleFS.open(String(pathBuf), "r");
+  if (!f) {
     sendJsonError(404, "File not found");
     return;
   }
 
   String contentType = filename.endsWith(".json") ? "application/json" : "application/x-ndjson";
-  server.send(200, contentType, content);
+  server.streamFile(f, contentType);
+  f.close();
 }
 
 void handlePostPrune() {

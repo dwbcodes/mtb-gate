@@ -441,25 +441,6 @@ String EventStore::getSessionsJson() {
   return payload;
 }
 
-String EventStore::getSessionFile(int sessionNum, const String& filename) {
-  if (!mounted_) return "";
-
-  char pathBuf[64];
-  snprintf(pathBuf, sizeof(pathBuf), "/events/session-%03d/%s", sessionNum, filename.c_str());
-
-  File f = LittleFS.open(String(pathBuf), "r");
-  if (!f) return "";
-
-  String content;
-  content.reserve(f.size());
-  uint8_t buf[512];
-  while (f.available()) {
-    size_t got = f.read(buf, sizeof(buf));
-    content.concat((const char*)buf, got);
-  }
-  f.close();
-  return content;
-}
 
 void EventStore::pruneOldSessions(size_t keepCount) {
   if (!mounted_) return;
