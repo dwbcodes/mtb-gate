@@ -778,9 +778,8 @@ async function restoreConfig(file) {
     const wifiPayload = {};
     if (config.staSsid !== undefined) wifiPayload.staSsid = config.staSsid;
     if (config.wifiChannel !== undefined) wifiPayload.wifiChannel = config.wifiChannel;
-    // Passwords are masked in export, only restore if not masked
-    if (config.apPassword && config.apPassword !== '***') wifiPayload.apPassword = config.apPassword;
-    if (config.staPassword && config.staPassword !== '***') wifiPayload.staPassword = config.staPassword;
+    if (config.apPassword !== undefined) wifiPayload.apPassword = config.apPassword;
+    if (config.staPassword !== undefined) wifiPayload.staPassword = config.staPassword;
 
     if (Object.keys(wifiPayload).length > 0) {
       await apiJson('/api/config/wifi', jsonOptions('PUT', wifiPayload));

@@ -178,13 +178,14 @@ describe("device UI static contract", () => {
     const html = readUiFile("index.html");
     const firmware = readFileSync(join(root, "firmware/gate/src/main.cpp"), "utf8");
 
-    // Export: passwords are always redacted
-    assert.match(firmware, /doc\["apPassword"\] = "\*\*\*"/);
-    assert.match(firmware, /doc\["staPassword"\] = "\*\*\*"/);
+    // Export: passwords are included in plaintext (not redacted)
+    assert.match(firmware, /doc\["apPassword"\] = config\.apPassword/);
+    assert.match(firmware, /doc\["staPassword"\] = config\.staPassword/);
 
-    // Restore: skips masked passwords
-    assert.match(js, /config\.apPassword !== '\*\*\*'/);
-    assert.match(js, /config\.staPassword !== '\*\*\*'/);
+    // Restore: passwords always applied (no masked-value guard)
+    assert.match(js, /wifiPayload\.apPassword = config\.apPassword/);
+    assert.match(js, /wifiPayload\.staPassword = config\.staPassword/);
+    assert.doesNotMatch(js, /apPassword !== '\*\*\*'/);
 
     // Restore: covers wifi settings
     assert.match(js, /wifiPayload\.staSsid = config\.staSsid/);

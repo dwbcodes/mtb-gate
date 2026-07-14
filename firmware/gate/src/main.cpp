@@ -1089,9 +1089,9 @@ String configJson() {
   doc["deviceLabel"] = config.deviceLabel;
   doc["gateNumber"] = config.gateNumber;
   doc["role"] = gateRoleName(config.role);
-  doc["apPassword"] = "***";
+  doc["apPassword"] = config.apPassword;
   doc["staSsid"] = config.staSsid;
-  doc["staPassword"] = "***";
+  doc["staPassword"] = config.staPassword;
   doc["startThreshold"] = config.startThreshold;
   doc["finishThreshold"] = config.finishThreshold;
   doc["line2Threshold"] = config.line2Threshold;
