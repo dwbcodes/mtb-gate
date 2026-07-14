@@ -652,6 +652,7 @@ async function loadNetworkConfig() {
     document.getElementById('wifiChannel').value = config.wifiChannel || 1;
     document.getElementById('peerMac').value = config.peerMac || '';
     document.getElementById('gateNumber').value = String(config.gateNumber ?? 1);
+    document.getElementById('countdownSeconds').value = config.countdownSeconds ?? 10;
     document.getElementById('dualTriggerEnabled').checked = config.dualTriggerEnabled || false;
     document.getElementById('wheelTrackTimeout').value = config.wheelTrackTimeoutMs ?? 3000;
     document.getElementById('officialTrigger').value = config.officialTrigger || 'first';
@@ -696,6 +697,11 @@ async function savePeerConfig() {
     gateNumber: parseInt(document.getElementById('gateNumber').value, 10),
     peerMac: document.getElementById('peerMac').value
   };
+  // Save countdown via /api/config/time (no reboot needed for this field)
+  const countdown = parseInt(document.getElementById('countdownSeconds').value, 10);
+  if (countdown >= 3 && countdown <= 30) {
+    await apiJson('/api/config/time', jsonOptions('PUT', { countdownSeconds: countdown }));
+  }
 
   await saveJsonConfig('/api/config/mac', config, 'peerMessage', '✓ Saved!');
 }
@@ -781,9 +787,10 @@ async function restoreConfig(file) {
       await apiJson('/api/config/wifi', jsonOptions('PUT', wifiPayload));
     }
 
-    // Apply active baseline-relative sensor calibration.
+    // Apply active baseline-relative sensor calibration and countdown.
     const timePayload = {};
     if (config.triggerDelta !== undefined) timePayload.triggerDelta = config.triggerDelta;
+    if (config.countdownSeconds !== undefined) timePayload.countdownSeconds = config.countdownSeconds;
 
     if (Object.keys(timePayload).length > 0) {
       await apiJson('/api/config/time', jsonOptions('PUT', timePayload));

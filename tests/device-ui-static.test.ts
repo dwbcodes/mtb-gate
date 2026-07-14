@@ -191,8 +191,9 @@ describe("device UI static contract", () => {
     assert.match(js, /wifiPayload\.staSsid = config\.staSsid/);
     assert.match(js, /wifiPayload\.wifiChannel = config\.wifiChannel/);
 
-    // Restore: covers sensor calibration
+    // Restore: covers sensor calibration and countdown
     assert.match(js, /timePayload\.triggerDelta = config\.triggerDelta/);
+    assert.match(js, /timePayload\.countdownSeconds = config\.countdownSeconds/);
 
     // Restore: covers wheel track settings (field name mapping: export vs API)
     assert.match(js, /wheelPayload\.enabled = config\.dualTriggerEnabled/);

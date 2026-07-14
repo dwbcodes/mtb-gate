@@ -192,7 +192,6 @@ constexpr float ADC_MAX = 4095.0F;
 constexpr float ADC_VREF = 3.3F;
 
 // Countdown state
-constexpr int COUNTDOWN_SECONDS = 10;
 constexpr unsigned long PENALTY_MS = 5000;
 String activeRunId = "";
 int lastAnnouncedSecond = -1;
@@ -1087,6 +1086,7 @@ String configJson() {
   doc["finishThreshold"] = config.finishThreshold;
   doc["line2Threshold"] = config.line2Threshold;
   doc["triggerDelta"] = config.triggerDelta;
+  doc["countdownSeconds"] = config.countdownSeconds;
   doc["wifiChannel"] = config.wifiChannel;
   doc["peerMac"] = config.peerMac;
   doc["dualTriggerEnabled"] = config.dualTriggerEnabled;
@@ -1183,6 +1183,7 @@ String updateTimeConfigFromJson(const String& body) {
   if (doc["finishThreshold"].is<float>()) next.finishThreshold = doc["finishThreshold"].as<float>();
   if (doc["line2Threshold"].is<float>()) next.line2Threshold = doc["line2Threshold"].as<float>();
   if (doc["triggerDelta"].is<float>()) next.triggerDelta = doc["triggerDelta"].as<float>();
+  if (doc["countdownSeconds"].is<int>()) next.countdownSeconds = doc["countdownSeconds"].as<int>();
 
   if (next.startThreshold < 0.0F || next.startThreshold > 2.0F ||
       next.finishThreshold < 0.0F || next.finishThreshold > 2.0F ||
@@ -1191,6 +1192,9 @@ String updateTimeConfigFromJson(const String& body) {
   }
   if (next.triggerDelta < 0.01F || next.triggerDelta > 2.0F) {
     return R"({"error":"triggerDelta must be 0.01-2.00"})";
+  }
+  if (next.countdownSeconds < 3 || next.countdownSeconds > 30) {
+    return R"({"error":"countdownSeconds must be 3-30"})";
   }
 
   config = configStore.save(next);
@@ -2386,16 +2390,16 @@ void handleStartGateLoop(unsigned long now) {
   if (run->status == RunStatus::Queued) {
     queue.updateStatus(run->runId, RunStatus::Countdown, now);
     freezeBaseline();
-    lastAnnouncedSecond = COUNTDOWN_SECONDS;
+    lastAnnouncedSecond = config.countdownSeconds;
     eventStore.logEvent("countdown_started", run->runId, run->riderId, now);
-    GateLog::info("RUN", "Countdown: " + String(COUNTDOWN_SECONDS));
+    GateLog::info("RUN", "Countdown: " + String(config.countdownSeconds));
     return;
   }
 
   // Countdown → tick each second, check for false start
   if (run->status == RunStatus::Countdown) {
     unsigned long elapsed = now - run->countdownStartedAtMs;
-    int secondsLeft = COUNTDOWN_SECONDS - (int)(elapsed / 1000);
+    int secondsLeft = config.countdownSeconds - (int)(elapsed / 1000);
 
     if (secondsLeft >= 0 && secondsLeft != lastAnnouncedSecond) {
       lastAnnouncedSecond = secondsLeft;
@@ -2425,7 +2429,7 @@ void handleStartGateLoop(unsigned long now) {
     }
 
     // Countdown complete
-    if (elapsed >= (unsigned long)COUNTDOWN_SECONDS * 1000UL) {
+    if (elapsed >= (unsigned long)config.countdownSeconds * 1000UL) {
       eventStore.logEvent("go", run->runId, run->riderId, now);
       if (falseStartDetected) {
         // Rider already crossed the line — go straight to OnCourse

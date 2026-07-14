@@ -21,6 +21,7 @@ GateConfig GateConfigStore::load() {
   const float storedTriggerDelta = preferences.getFloat(kTriggerDeltaKey, 0.3F);
   const uint8_t storedWifiChannel = preferences.getUChar(kWifiChannelKey, 1);
   const String storedPeerMac = preferences.getString(kPeerMacKey, "");
+  const uint8_t storedCountdown = preferences.getUChar(kCountdownKey, 10);
   const bool storedDualTrigger = preferences.getBool(kDualTriggerKey, false);
   const uint16_t storedWheelTimeout = preferences.getUShort(kWheelTimeoutKey, 3000);
   const String storedOfficialTrig = preferences.getString(kOfficialTrigKey, "first");
@@ -48,6 +49,7 @@ GateConfig GateConfigStore::load() {
   cfg.role = derivedRole;
   cfg.peerMac = storedPeerMac;
   cfg.gateNumber = storedGateNumber;
+  cfg.countdownSeconds = storedCountdown >= 3 && storedCountdown <= 30 ? storedCountdown : 10;
   cfg.dualTriggerEnabled = storedDualTrigger;
   cfg.wheelTrackTimeoutMs = storedWheelTimeout;
   cfg.officialTrigger = storedOfficialTrig;
@@ -68,6 +70,7 @@ GateConfig GateConfigStore::save(const GateConfig& config) {
   preferences.putUChar(kWifiChannelKey, config.wifiChannel);
   preferences.putString(kPeerMacKey, config.peerMac);
   preferences.putUChar(kGateNumberKey, config.gateNumber);
+  preferences.putUChar(kCountdownKey, config.countdownSeconds);
   preferences.putBool(kDualTriggerKey, config.dualTriggerEnabled);
   preferences.putUShort(kWheelTimeoutKey, config.wheelTrackTimeoutMs);
   preferences.putString(kOfficialTrigKey, config.officialTrigger);

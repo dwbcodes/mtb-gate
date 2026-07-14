@@ -16,6 +16,7 @@ The **Reset** page in the device UI has a **Backup & Restore** section. Use it t
 | `staPassword` | Yes | Stored in plaintext in the backup file |
 | `wifiChannel` | Yes | ESP-Now + AP channel (1–13) |
 | `triggerDelta` | Yes | Baseline-relative sensor trigger threshold (volts) |
+| `countdownSeconds` | Yes | Countdown duration before GO (3–30, default 10) |
 | `dualTriggerEnabled` | Yes | Wheel track dual-trigger mode on/off |
 | `wheelTrackTimeoutMs` | Yes | Second-wheel detection window (ms) |
 | `officialTrigger` | Yes | `"first"` or `"second"` — which wheel crossing starts the clock |

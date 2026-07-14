@@ -23,6 +23,7 @@ struct GateConfig {
   GateRole role = GateRole::Start;
   String peerMac;
   uint8_t gateNumber = 1;
+  uint8_t  countdownSeconds = 10;         // countdown duration (3-30)
   bool     dualTriggerEnabled = false;    // enable dual-trigger (front + rear wheel) detection
   uint16_t wheelTrackTimeoutMs = 3000;    // window for second wheel before flagging wheel lift
   String   officialTrigger = "first";     // "first" or "second" — authoritative wheel for metrics
@@ -52,6 +53,7 @@ private:
   static constexpr const char* kRoleKey = "role";
   static constexpr const char* kPeerMacKey = "peerMac";
   static constexpr const char* kGateNumberKey    = "gateNum";
+  static constexpr const char* kCountdownKey      = "countdown";
   static constexpr const char* kDualTriggerKey   = "dualTrigger";
   static constexpr const char* kWheelTimeoutKey  = "wheelTimeout";
   static constexpr const char* kOfficialTrigKey  = "officialTrig";

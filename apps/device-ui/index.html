@@ -251,6 +251,10 @@
               <input type="text" id="peerMac" placeholder="Leave empty for auto-discover"
                 pattern="^([0-9a-fA-F]{2}:){5}([0-9a-fA-F]{2})$|^$">
             </label>
+            <label class="start-only">
+              <span>Countdown seconds (3–30)</span>
+              <input type="number" id="countdownSeconds" min="3" max="30" step="1" value="10">
+            </label>
             <button class="btn-save" id="savePeerConfig">Save Gate Settings</button>
             <p id="peerMessage" style="font-size: 0.85em; margin-top: 8px; color: var(--accent);"></p>
           </section>
