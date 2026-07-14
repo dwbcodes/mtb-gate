@@ -242,6 +242,23 @@ bool baselineFrozen = false;
 void freezeBaseline() { baselineFrozen = true; }
 void unfreezeBaseline() { baselineFrozen = false; }
 
+// Format a 6-byte MAC address as "XX:XX:XX:XX:XX:XX"
+String macToString(const uint8_t* mac) {
+  char buf[18];
+  snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
+    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  return String(buf);
+}
+
+// Clear active run state — used at every run termination point
+void resetActiveRunState() {
+  activeRunId = "";
+  falseStartDetected = false;
+  falseStartTriggeredAtMs = 0;
+  buzzerOff();
+  unfreezeBaseline();
+}
+
 bool sensorTriggered(int pin) {
   int raw = analogRead(pin);
   float voltage = (raw / ADC_MAX) * ADC_VREF;
@@ -505,9 +522,7 @@ void sendEspNowMsg(EspNowMsgType type, const uint8_t* destMac, unsigned long ts1
   payload.timestampMs = ts1 ? ts1 : millis();
   payload.timestampMs2 = ts2;
 
-  char macStr[18];
-  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-    destMac[0], destMac[1], destMac[2], destMac[3], destMac[4], destMac[5]);
+  String macStr = macToString(destMac);
 
   espNowSendRetrying = (retries > 0);
 
@@ -520,7 +535,7 @@ void sendEspNowMsg(EspNowMsgType type, const uint8_t* destMac, unsigned long ts1
     esp_err_t result = esp_now_send(destMac, (uint8_t*)&payload, sizeof(payload));
     if (result != ESP_OK) {
       espNowSendRetrying = false;
-      GateLog::info("ESP-NOW", "Send queuing failed to " + String(macStr) + " err=" + String(result));
+      GateLog::info("ESP-NOW", "Send queuing failed to " + macStr + " err=" + String(result));
       return;
     }
 
@@ -535,7 +550,7 @@ void sendEspNowMsg(EspNowMsgType type, const uint8_t* destMac, unsigned long ts1
 
   espNowSendRetrying = false;
   GateLog::info("ESP-NOW", "Delivery FAILED after " + String(retries + 1) +
-    " attempts to " + String(macStr));
+    " attempts to " + macStr);
 }
 
 static const uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
@@ -699,8 +714,7 @@ void onFinishWheel2Received(unsigned long correctedMs) {
   GateLog::info("WHEEL", "Received finish wheel2 but no FinishedAwaitingWheel2 run");
 }
 
-void autoRegisterPeer(const uint8_t* mac, const char* macStr) {
-  String senderMac = String(macStr);
+void autoRegisterPeer(const uint8_t* mac, const String& senderMac) {
   if (!espNowReady || config.peerMac != senderMac) {
     config.peerMac = senderMac;
     memcpy(peerMacBytes, mac, 6);
@@ -750,11 +764,7 @@ void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
     if (config.gateNumber != 1) return;  // only start gate tracks peer rider sync validation
     const RiderSyncAckMsg* ack = (const RiderSyncAckMsg*)data;
 
-    char macStr[18];
-    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-
-    lastRiderSyncAckMac = String(macStr);
+    lastRiderSyncAckMac = macToString(mac);
     lastRiderSyncAckTotal = ack->totalCount;
     lastRiderSyncAckChecksum = ack->checksum;
     lastRiderSyncAckAtMs = millis();
@@ -772,11 +782,7 @@ void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
     if (config.gateNumber != 1) return;  // only start gate tracks peer clock validation
     const ClockSyncAckMsg* ack = (const ClockSyncAckMsg*)data;
 
-    char macStr[18];
-    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-
-    lastClockSyncAckMac = String(macStr);
+    lastClockSyncAckMac = macToString(mac);
     lastClockSyncAppliedOffsetMs = ack->appliedOffsetMs;
     lastClockSyncDifferenceMs = (long)millis() - (long)ack->peerCorrectedMs;
     lastClockSyncAckRttMs = ack->rttMs;
@@ -794,14 +800,12 @@ void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
   if (len < (int)sizeof(EspNowPayload)) return;
   const EspNowPayload* payload = (const EspNowPayload*)data;
 
-  char macStr[18];
-  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  String macStr = macToString(mac);
 
   // --- Non-start gate handlers ---
   if (config.gateNumber != 1) {
     if (payload->type == EspNowMsgType::Ping) {
-      String senderMac = String(macStr);
+      const String& senderMac = macStr;
       bool configChanged = false;
 
       // Auto-discover start gate MAC
@@ -900,10 +904,7 @@ void initEspNow() {
     // For fire-and-forget sends (retrying=false) log failures immediately;
     // retried sends are logged by the caller after all attempts exhausted.
     if (!espNowSendOk && !espNowSendRetrying) {
-      char macStr[18];
-      snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-      GateLog::info("ESP-NOW", "Delivery FAILED to " + String(macStr));
+      GateLog::info("ESP-NOW", "Delivery FAILED to " + macToString(mac));
     }
   });
 
@@ -1313,6 +1314,14 @@ String addRiderFromJson(const String& body) {
   return R"({"ok":true})";
 }
 
+// Remove a rider by tagId and broadcast the updated roster
+void removeRiderByTag(const String& tagId) {
+  riderStore.remove(tagId);
+  eventStore.logEvent("rider_removed", "", "rider-" + tagId);
+  eventStore.exportRiders(riderStore);
+  broadcastRiders();
+}
+
 String deleteRiderFromJson(const String& body) {
   JsonDocument doc;
   DeserializationError error = deserializeJson(doc, body);
@@ -1324,11 +1333,7 @@ String deleteRiderFromJson(const String& body) {
     return R"({"error":"tagId required"})";
   }
 
-  String removedTagId = doc["tagId"].as<String>();
-  riderStore.remove(removedTagId);
-  eventStore.logEvent("rider_removed", "", "rider-" + removedTagId);
-  eventStore.exportRiders(riderStore);
-  broadcastRiders();
+  removeRiderByTag(doc["tagId"].as<String>());
   return R"({"ok":true})";
 }
 
@@ -1488,10 +1493,7 @@ void handleDeleteRiders() {
     return;
   }
 
-  riderStore.remove(tagId);
-  eventStore.logEvent("rider_removed", "", "rider-" + tagId);
-  eventStore.exportRiders(riderStore);
-  broadcastRiders();
+  removeRiderByTag(tagId);
   sendJson(200, R"({"ok":true})");
 }
 
@@ -1929,11 +1931,7 @@ void handlePostResultsStop() {
     eventStore.logEvent("run_cancelled", activeRunId, run->riderId, millis());
     GateLog::info("RUN", "Run cancelled via API: " + activeRunId);
   }
-  activeRunId = "";
-  falseStartDetected = false;
-  falseStartTriggeredAtMs = 0;
-  buzzerOff();
-  unfreezeBaseline();
+  resetActiveRunState();
   queue.removeTerminal();
   sendJson(200, R"({"ok":true,"message":"Active run cancelled"})");
 }
@@ -1950,11 +1948,7 @@ void handleDeleteResults() {
   }
   if (body["all"] | false) {
     // Clear all live runs
-    activeRunId = "";
-    falseStartDetected = false;
-    falseStartTriggeredAtMs = 0;
-    buzzerOff();
-    unfreezeBaseline();
+    resetActiveRunState();
     queue.clear();
     eventStore.clearAllRuns();
     sendJson(200, R"({"ok":true,"cleared":"all"})");
@@ -1969,11 +1963,7 @@ void handleDeleteResults() {
   RunRecord* live = queue.find(runId);
   if (live) {
     if (live->runId == activeRunId) {
-      activeRunId = "";
-      falseStartDetected = false;
-      falseStartTriggeredAtMs = 0;
-      buzzerOff();
-      unfreezeBaseline();
+      resetActiveRunState();
     }
     queue.remove(runId);
     sendJson(200, R"({"ok":true,"source":"live"})");
@@ -2333,11 +2323,7 @@ void startRunForRider(const String& tagId) {
       const String cancelledRunId = activeRunId;
       GateLog::info("RUN", "Rider " + rider->displayName + " re-scanned - stopping and deleting run");
       eventStore.logEvent("run_cancelled", cancelledRunId, rider->riderId, millis());
-      activeRunId = "";
-      falseStartDetected = false;
-      falseStartTriggeredAtMs = 0;
-      buzzerOff();
-      unfreezeBaseline();
+      resetActiveRunState();
       queue.remove(cancelledRunId);
       return;
     }
@@ -2394,7 +2380,7 @@ void handleStartGateLoop(unsigned long now) {
   }
 
   RunRecord* run = queue.find(activeRunId);
-  if (!run) { activeRunId = ""; unfreezeBaseline(); return; }
+  if (!run) { resetActiveRunState(); return; }
 
   // Queued → start countdown
   if (run->status == RunStatus::Queued) {
@@ -2519,9 +2505,7 @@ void handleStartGateLoop(unsigned long now) {
       GateLog::info("RUN", "OnCourse timeout after 5 min - no finish received for " + run->runId);
       run->status = RunStatus::TimedOut;
       eventStore.logEvent("run_timed_out", run->runId, run->riderId, now);
-      activeRunId = "";
-      buzzerOff();
-      unfreezeBaseline();
+      resetActiveRunState();
       queue.removeTerminal();
     }
     return;
@@ -2542,15 +2526,14 @@ void handleStartGateLoop(unsigned long now) {
 
   // Finished → clear active run and clean up queue
   if (run->status == RunStatus::Finished) {
-    buzzerOff();
-    activeRunId = "";
+    resetActiveRunState();
     queue.removeTerminal();
     return;
   }
 
   // Cancelled → clean up
   if (run->status == RunStatus::Cancelled) {
-    activeRunId = "";
+    resetActiveRunState();
     queue.removeTerminal();
     return;
   }
