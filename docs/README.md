@@ -22,6 +22,7 @@ These API docs (plus `openapi.json`) are embedded into the firmware by `npm run 
 ## Guides & Hardware
 
 - **[USER_GUIDE.md](USER_GUIDE.md)** — End-user guide: setup, riders, sessions, troubleshooting (embedded in firmware, shown on the device UI's Monitor → User Guide page)
+- **[BACKUP_RESTORE.md](BACKUP_RESTORE.md)** — What the config backup contains, what is redacted, and restore flows for factory reset and new-hardware scenarios
 - **[RIDER_REGISTRATION.md](RIDER_REGISTRATION.md)** — Registering riders via NFC, API, or serial
 - **[NFC_TROUBLESHOOTING.md](NFC_TROUBLESHOOTING.md)** — PN532 wiring and diagnosis
 - **[BUZZER.md](BUZZER.md)** — Buzzer wiring and countdown audio pattern

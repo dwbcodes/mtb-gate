@@ -173,6 +173,43 @@ describe("device UI static contract", () => {
     assert.match(firmware, /sendJson\(acceptable \? 200 : 504, payload\)/);
   });
 
+  it("backup export redacts passwords and restore covers all restorable fields", () => {
+    const js = readUiFile("main.js");
+    const html = readUiFile("index.html");
+    const firmware = readFileSync(join(root, "firmware/gate/src/main.cpp"), "utf8");
+
+    // Export: passwords are always redacted
+    assert.match(firmware, /doc\["apPassword"\] = "\*\*\*"/);
+    assert.match(firmware, /doc\["staPassword"\] = "\*\*\*"/);
+
+    // Restore: skips masked passwords
+    assert.match(js, /config\.apPassword !== '\*\*\*'/);
+    assert.match(js, /config\.staPassword !== '\*\*\*'/);
+
+    // Restore: covers wifi settings
+    assert.match(js, /wifiPayload\.staSsid = config\.staSsid/);
+    assert.match(js, /wifiPayload\.wifiChannel = config\.wifiChannel/);
+
+    // Restore: covers sensor calibration
+    assert.match(js, /timePayload\.triggerDelta = config\.triggerDelta/);
+
+    // Restore: covers wheel track settings (field name mapping: export vs API)
+    assert.match(js, /wheelPayload\.enabled = config\.dualTriggerEnabled/);
+    assert.match(js, /wheelPayload\.timeoutMs = config\.wheelTrackTimeoutMs/);
+    assert.match(js, /wheelPayload\.officialTrigger = config\.officialTrigger/);
+    assert.match(js, /\/api\/config\/wheeltrack/);
+
+    // Restore: covers gate identity
+    assert.match(js, /macPayload\.gateNumber = config\.gateNumber/);
+    assert.match(js, /macPayload\.peerMac = config\.peerMac/);
+    assert.match(js, /macPayload\.deviceLabel = config\.deviceLabel/);
+
+    // UI: backup & restore controls exist on the Reset page
+    assert.match(html, /id="downloadConfig"/);
+    assert.match(html, /id="restoreConfigFile"/);
+    assert.match(html, /Backup.*Restore|Restore.*Backup/);
+  });
+
   it("links only to API documentation routes served by firmware", () => {
     const html = readUiFile("index.html");
     const firmware = readFileSync(join(root, "firmware/gate/src/main.cpp"), "utf8");

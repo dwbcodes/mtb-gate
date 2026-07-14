@@ -794,6 +794,16 @@ async function restoreConfig(file) {
       await apiJson('/api/config/time', jsonOptions('PUT', timePayload));
     }
 
+    // Apply wheel track config (note: API uses 'enabled'/'timeoutMs', not the export field names)
+    const wheelPayload = {};
+    if (config.dualTriggerEnabled !== undefined) wheelPayload.enabled = config.dualTriggerEnabled;
+    if (config.wheelTrackTimeoutMs !== undefined) wheelPayload.timeoutMs = config.wheelTrackTimeoutMs;
+    if (config.officialTrigger !== undefined) wheelPayload.officialTrigger = config.officialTrigger;
+
+    if (Object.keys(wheelPayload).length > 0) {
+      await apiJson('/api/config/wheeltrack', jsonOptions('PUT', wheelPayload));
+    }
+
     // Apply gate/mac config (triggers reboot)
     const macPayload = {};
     if (config.gateNumber !== undefined) macPayload.gateNumber = config.gateNumber;
