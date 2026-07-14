@@ -47,6 +47,7 @@ bool EventStore::begin(const String& deviceId, uint8_t gateNumber, const String&
 
   LittleFS.mkdir("/events");
   LittleFS.mkdir(sessionDir_);
+  cachedSessionCount_ = -1;  // new session dir added, invalidate cache
 
   writeManifest(gateNumber, role);
   writeSyncJson();
@@ -220,23 +221,37 @@ String EventStore::tailJsonl(const String& path, int limit) {
   File f = LittleFS.open(path, "r");
   if (!f) return "[]";
 
-  // Read all lines into a circular buffer of limit size
-  // For embedded: just read last N lines
-  String lines[50];  // max 50
-  if (limit > 50) limit = 50;
-  int total = 0;
-
+  // Read entire file in one pass with 512-byte chunks
+  String content;
+  content.reserve(f.size());
+  uint8_t buf[512];
   while (f.available()) {
-    String line = f.readStringUntil('\n');
-    line.trim();
-    if (line.length() == 0) continue;
-    lines[total % limit] = line;
-    total++;
+    size_t got = f.read(buf, sizeof(buf));
+    content.concat((const char*)buf, got);
   }
   f.close();
 
+  String lines[50];
+  if (limit > 50) limit = 50;
+  int total = 0;
+  int pos = 0;
+  while (pos < (int)content.length()) {
+    int nl = content.indexOf('\n', pos);
+    if (nl < 0) nl = content.length();
+    if (nl > pos) {
+      String line = content.substring(pos, nl);
+      line.trim();
+      if (line.length() > 0) {
+        lines[total % limit] = line;
+        total++;
+      }
+    }
+    pos = nl + 1;
+  }
+
   // Build JSON array from the circular buffer
   String result = "[";
+  result.reserve(content.length() + 4);
   int start = total <= limit ? 0 : total % limit;
   int count = total < limit ? total : limit;
   for (int i = 0; i < count; i++) {
@@ -256,34 +271,33 @@ String EventStore::getRunsJson(int limit) {
   if (!mounted_) return "[]";
   if (limit > 50) limit = 50;
 
-  // Collect session numbers
-  int sessions[100];
-  int sessCount = 0;
-  File eventsDir = LittleFS.open("/events");
-  if (eventsDir && eventsDir.isDirectory()) {
-    File entry = eventsDir.openNextFile();
-    while (entry && sessCount < 100) {
-      if (entry.isDirectory()) {
-        String name = String(entry.name());
-        int dashIdx = name.lastIndexOf('-');
-        if (dashIdx >= 0) {
-          sessions[sessCount++] = name.substring(dashIdx + 1).toInt();
+  // Rebuild session cache if stale
+  if (cachedSessionCount_ < 0) {
+    cachedSessionCount_ = 0;
+    File eventsDir = LittleFS.open("/events");
+    if (eventsDir && eventsDir.isDirectory()) {
+      File entry = eventsDir.openNextFile();
+      while (entry && cachedSessionCount_ < 100) {
+        if (entry.isDirectory()) {
+          String name = String(entry.name());
+          int dashIdx = name.lastIndexOf('-');
+          if (dashIdx >= 0)
+            cachedSessions_[cachedSessionCount_++] = name.substring(dashIdx + 1).toInt();
         }
-      }
-      entry = eventsDir.openNextFile();
-    }
-  }
-
-  // Sort descending (newest first)
-  for (int i = 0; i < sessCount - 1; i++) {
-    for (int j = i + 1; j < sessCount; j++) {
-      if (sessions[j] > sessions[i]) {
-        int tmp = sessions[i];
-        sessions[i] = sessions[j];
-        sessions[j] = tmp;
+        entry = eventsDir.openNextFile();
       }
     }
+    // Sort descending (newest first)
+    for (int i = 0; i < cachedSessionCount_ - 1; i++)
+      for (int j = i + 1; j < cachedSessionCount_; j++)
+        if (cachedSessions_[j] > cachedSessions_[i]) {
+          int tmp = cachedSessions_[i];
+          cachedSessions_[i] = cachedSessions_[j];
+          cachedSessions_[j] = tmp;
+        }
   }
+  int sessCount = cachedSessionCount_;
+  int* sessions = cachedSessions_;
 
   // Read runs from sessions newest-first until we have enough
   String lines[50];
@@ -298,17 +312,30 @@ String EventStore::getRunsJson(int limit) {
     File f = LittleFS.open(path, "r");
     if (!f) continue;
 
-    // Read all lines from this session into temp buffer
-    String sessLines[50];
-    int sessTotal = 0;
-    while (f.available() && sessTotal < 50) {
-      String line = f.readStringUntil('\n');
-      line.trim();
-      if (line.length() > 0) {
-        sessLines[sessTotal++] = line;
-      }
+    // Read entire session file in one pass with 512-byte chunks
+    String content;
+    content.reserve(f.size());
+    uint8_t buf[512];
+    while (f.available()) {
+      size_t got = f.read(buf, sizeof(buf));
+      content.concat((const char*)buf, got);
     }
     f.close();
+
+    // Tokenise lines in memory
+    String sessLines[50];
+    int sessTotal = 0;
+    int pos = 0;
+    while (pos < (int)content.length() && sessTotal < 50) {
+      int nl = content.indexOf('\n', pos);
+      if (nl < 0) nl = content.length();
+      if (nl > pos) {
+        String line = content.substring(pos, nl);
+        line.trim();
+        if (line.length() > 0) sessLines[sessTotal++] = line;
+      }
+      pos = nl + 1;
+    }
 
     // Add from newest (end) to oldest (start)
     for (int i = sessTotal - 1; i >= 0 && collected < limit; i--) {
@@ -405,7 +432,13 @@ String EventStore::getSessionFile(int sessionNum, const String& filename) {
   File f = LittleFS.open(String(pathBuf), "r");
   if (!f) return "";
 
-  String content = f.readString();
+  String content;
+  content.reserve(f.size());
+  uint8_t buf[512];
+  while (f.available()) {
+    size_t got = f.read(buf, sizeof(buf));
+    content.concat((const char*)buf, got);
+  }
   f.close();
   return content;
 }
@@ -469,6 +502,7 @@ void EventStore::pruneOldSessions(size_t keepCount) {
     LittleFS.rmdir(dir);
     GateLog::info("EVENTS", "Pruned session " + String(sessions[i]));
   }
+  cachedSessionCount_ = -1;  // sessions deleted, invalidate cache
 }
 
 void EventStore::clearAllRuns() {

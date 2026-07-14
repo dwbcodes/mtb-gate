@@ -2050,9 +2050,13 @@ void handleGetFileView() {
   String body;
   body.reserve((truncated ? kMaxFileViewBytes : fileSize) + 1);
   size_t readBytes = 0;
+  uint8_t buf[512];
   while (file.available() && readBytes < kMaxFileViewBytes) {
-    body += char(file.read());
-    readBytes++;
+    size_t toRead = min((size_t)sizeof(buf), kMaxFileViewBytes - readBytes);
+    size_t got = file.read(buf, toRead);
+    if (got == 0) break;
+    body.concat((const char*)buf, got);
+    readBytes += got;
   }
   file.close();
 

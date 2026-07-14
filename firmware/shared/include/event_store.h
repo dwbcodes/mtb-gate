@@ -59,4 +59,7 @@ private:
 
   // Tail reading helper: returns last N lines from a JSONL file wrapped in JSON array
   String tailJsonl(const String& path, int limit);
+
+  int cachedSessions_[100];
+  int cachedSessionCount_ = -1;  // -1 = stale; rebuild on next getRunsJson() call
 };
