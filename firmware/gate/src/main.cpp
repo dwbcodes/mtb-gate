@@ -2470,7 +2470,8 @@ void handleStartGateLoop(unsigned long now) {
       unsigned long sinceFirst = now - run->startTriggeredAtMs;
       if (sinceFirst <= config.wheelTrackTimeoutMs) {
         if (sensorTriggered(SENSOR_LINE1_PIN)) {
-          run->line2TriggeredAtMs = now;
+          queue.stampLine2(run->runId, now);
+          eventStore.logEvent("line2_triggered", run->runId, run->riderId, now);
           sensorAboveCount = 0;
           unfreezeBaseline();
           GateLog::info("WHEEL", "Start rear wheel: crossing=" +

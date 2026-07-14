@@ -30,4 +30,13 @@ describe("firmware static contract", () => {
     assert.match(firmware, /queue\.remove\(cancelledRunId\);/);
     assert.doesNotMatch(firmware, /activeRun->status = RunStatus::Cancelled;/);
   });
+
+  it("stamps line2 timing from the firmware start-gate sensor path", () => {
+    const firmware = readFirmware();
+
+    assert.match(firmware, /if \(config\.dualTriggerEnabled && run->line2TriggeredAtMs == 0/);
+    assert.match(firmware, /queue\.stampLine2\(run->runId, now\);/);
+    assert.match(firmware, /eventStore\.logEvent\("line2_triggered", run->runId, run->riderId, now\);/);
+    assert.match(firmware, /metrics\["launchMs"\] = \(long\)\(run->line2TriggeredAtMs - run->startTriggeredAtMs\);/);
+  });
 });
