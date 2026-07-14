@@ -149,7 +149,7 @@ Default USB_MATCH regex: `Espressif|USB JTAG|CDC ACM`; override with `make attac
 
 ### Firmware Abstractions
 
-- **gate_config.h/cpp**: Persistent NVS storage for AP/station password, legacy thresholds, `triggerDelta`, Wi-Fi channel, gate number, and peer MAC. Gate number is the source of truth: role, deviceId (`Gate-<#>-<mac>`), and label are derived from it on every load; AP SSID always equals deviceId
+- **gate_config.h/cpp**: Persistent NVS storage for AP/station password, legacy thresholds, `triggerDelta`, `countdownSeconds` (3–30, default 10), Wi-Fi channel, gate number, and peer MAC. Gate number is the source of truth: role, deviceId (`Gate-<#>-<mac>`), and label are derived from it on every load; AP SSID always equals deviceId
 - **run_queue.h/cpp**: Fixed 8-slot queue for overlapping runs; `updateStatus()` stamps the timestamp matching each status transition; `stampLine2()` for dual-sensor timing (not yet wired to hardware)
 - **rider_store.h/cpp**: Persistent NVS rider registration (32-entry max), keyed by tagId; synced start→peers via ESP-Now broadcasts
 - **nfc_reader.h/cpp**: PN532 I2C reader with NACK-probe before init (fails fast without hardware) and listen-window polling
