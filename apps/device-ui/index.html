@@ -126,14 +126,17 @@
               Tap a new NFC tag to register a rider for the day
             </p>
             <p id="nfcStatus" style="color: var(--accent); font-size: 0.85em; font-weight: 600;">Ready</p>
-          </section>
 
-          <section class="card">
+            <hr style="border: none; border-top: 1px solid var(--border); margin: 16px 0;">
+
             <div class="section-head">
-              <h2>Registered Riders</h2>
-              <button id="refreshRiders" class="btn-secondary">Refresh</button>
+              <h3 style="margin: 0; font-size: 1em;">Registered Riders</h3>
+              <div style="display: flex; gap: 8px;">
+                <button id="refreshRiders" class="btn-secondary">Refresh</button>
+                <button id="deleteAllRidersBtn" class="btn-danger">Delete All</button>
+              </div>
             </div>
-            <div id="rosterList" class="roster"></div>
+            <div id="rosterList" class="roster" style="margin-top: 12px;"></div>
           </section>
         </div>
 

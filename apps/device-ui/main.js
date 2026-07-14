@@ -397,7 +397,15 @@ function renderRidersList(riders) {
     inner.appendChild(name);
     inner.appendChild(document.createElement('br'));
     inner.appendChild(id);
+
+    const del = document.createElement('button');
+    del.className = 'btn-danger';
+    del.style.cssText = 'padding: 4px 10px; font-size: 0.8em;';
+    del.textContent = 'Delete';
+    del.addEventListener('click', () => deleteRider(rider.tagId, rider.displayName));
+
     item.appendChild(inner);
+    item.appendChild(del);
     list.appendChild(item);
   }
 }
@@ -461,6 +469,16 @@ async function registerRider(displayName, tagId) {
   } catch (err) {
     console.error('Failed to register rider:', err);
     document.getElementById('nfcStatus').textContent = 'Error: ' + err.message;
+  }
+}
+
+async function deleteRider(tagId, displayName) {
+  if (!confirm('Delete rider "' + displayName + '"?')) return;
+  try {
+    await apiJson('/api/riders', jsonOptions('DELETE', { tagId }));
+    loadRiders();
+  } catch (err) {
+    alert('Error: ' + err.message);
   }
 }
 
@@ -1021,6 +1039,7 @@ async function sendPeerCommand(endpoint, button) {
 // EVENT LISTENERS
 document.getElementById('tapNfc').addEventListener('click', startNfcListen);
 document.getElementById('refreshRiders').addEventListener('click', loadRiders);
+document.getElementById('deleteAllRidersBtn').addEventListener('click', clearAllRiders);
 document.getElementById('deleteAllResultsBtn').addEventListener('click', deleteAllResults);
 document.getElementById('refreshFiles').addEventListener('click', () => loadFiles(currentFilePath));
 document.getElementById('browseFilePath').addEventListener('click', () => loadFiles(document.getElementById('filePath').value));
