@@ -34,30 +34,30 @@ GateConfig GateConfigStore::load() {
   // Label: regenerate from gate number to stay in sync with naming convention
   String label = defaultDeviceLabel(storedGateNumber);
 
-  return {
-    deviceId,
-    label,
-    storedApPassword,
-    storedStaSsid,
-    storedStaPassword,
-    storedStartThreshold,
-    storedFinishThreshold,
-    storedLine2Threshold,
-    storedTriggerDelta,
-    storedWifiChannel,
-    derivedRole,
-    storedPeerMac,
-    storedGateNumber,
-    storedDualTrigger,
-    storedWheelTimeout,
-    storedOfficialTrig
-  };
+  GateConfig cfg;
+  cfg.deviceId = deviceId;
+  cfg.deviceLabel = label;
+  cfg.apPassword = storedApPassword;
+  cfg.staSsid = storedStaSsid;
+  cfg.staPassword = storedStaPassword;
+  cfg.startThreshold = storedStartThreshold;
+  cfg.finishThreshold = storedFinishThreshold;
+  cfg.line2Threshold = storedLine2Threshold;
+  cfg.triggerDelta = storedTriggerDelta;
+  cfg.wifiChannel = storedWifiChannel;
+  cfg.role = derivedRole;
+  cfg.peerMac = storedPeerMac;
+  cfg.gateNumber = storedGateNumber;
+  cfg.dualTriggerEnabled = storedDualTrigger;
+  cfg.wheelTrackTimeoutMs = storedWheelTimeout;
+  cfg.officialTrigger = storedOfficialTrig;
+  return cfg;
 }
 
 GateConfig GateConfigStore::save(const GateConfig& config) {
   Preferences preferences;
   preferences.begin(kNamespace, false);
-  preferences.putString(kDeviceLabelKey, config.deviceLabel);
+  // deviceLabel and role are derived from gateNumber in load(); don't persist them
   preferences.putString(kApPasswordKey, config.apPassword);
   preferences.putString(kStaSsidKey, config.staSsid);
   preferences.putString(kStaPasswordKey, config.staPassword);
@@ -66,7 +66,6 @@ GateConfig GateConfigStore::save(const GateConfig& config) {
   preferences.putFloat(kLine2ThresholdKey, config.line2Threshold);
   preferences.putFloat(kTriggerDeltaKey, config.triggerDelta);
   preferences.putUChar(kWifiChannelKey, config.wifiChannel);
-  preferences.putString(kRoleKey, gateRoleName(config.role));
   preferences.putString(kPeerMacKey, config.peerMac);
   preferences.putUChar(kGateNumberKey, config.gateNumber);
   preferences.putBool(kDualTriggerKey, config.dualTriggerEnabled);

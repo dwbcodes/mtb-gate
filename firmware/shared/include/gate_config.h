@@ -12,20 +12,20 @@
 struct GateConfig {
   String deviceId;
   String deviceLabel;
-  String apPassword;
+  String apPassword = "changeme123";
   String staSsid;
   String staPassword;
-  float startThreshold;
-  float finishThreshold;
-  float line2Threshold;
-  float triggerDelta;  // voltage delta above/below baseline that counts as a trigger; set by calibration
-  uint8_t wifiChannel;
-  GateRole role;
+  float startThreshold = 2.0F;
+  float finishThreshold = 2.0F;
+  float line2Threshold = 2.0F;
+  float triggerDelta = 0.3F;  // voltage delta above/below baseline that counts as a trigger; set by calibration
+  uint8_t wifiChannel = 1;
+  GateRole role = GateRole::Start;
   String peerMac;
-  uint8_t gateNumber;
-  bool     dualTriggerEnabled;    // enable dual-trigger (front + rear wheel) detection
-  uint16_t wheelTrackTimeoutMs;   // window for second wheel before flagging wheel lift
-  String   officialTrigger;       // "first" or "second" — authoritative wheel for metrics
+  uint8_t gateNumber = 1;
+  bool     dualTriggerEnabled = false;    // enable dual-trigger (front + rear wheel) detection
+  uint16_t wheelTrackTimeoutMs = 3000;    // window for second wheel before flagging wheel lift
+  String   officialTrigger = "first";     // "first" or "second" — authoritative wheel for metrics
 };
 
 // Persists GateConfig to NVS ("mtb-gate" namespace) via Preferences.

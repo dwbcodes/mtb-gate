@@ -76,6 +76,7 @@ bool RiderStore::remove(const String& tagId) {
 void RiderStore::persist() {
   Preferences prefs;
   prefs.begin("riders", false);
+  prefs.clear();  // remove orphaned keys from deleted riders
   prefs.putUChar("count", count_);
 
   for (size_t i = 0; i < count_; i++) {

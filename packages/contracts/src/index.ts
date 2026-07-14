@@ -9,8 +9,8 @@ export type RiderId = string;
 export type TagId = string;
 export type RunId = string;
 export type DeviceId = string;
-export type GateRole = "start" | "finish";
-export type RunStatus = "queued" | "countdown" | "awaiting-start" | "on-course" | "finished" | "timed-out";
+export type GateRole = "start" | "finish" | "intermediate";
+export type RunStatus = "queued" | "countdown" | "awaiting-start" | "on-course" | "finished" | "timed-out" | "cancelled" | "finished-awaiting-wheel2";
 export type GateEventType = "nfc-scan" | "countdown-start" | "countdown-go" | "start-trigger" | "line2-trigger" | "finish-trigger" | "timeout";
 
 export interface Rider {
@@ -49,6 +49,9 @@ export interface AttemptRecord {
   startTriggeredAt: string | null;
   line2TriggeredAt: string | null;
   finishTriggeredAt: string | null;
+  finishWheel2TriggeredAt?: string | null;
+  startCrossingMs?: number | null;
+  finishCrossingMs?: number | null;
   metrics: AttemptMetrics;
   startGateId: DeviceId;
   finishGateId: DeviceId;

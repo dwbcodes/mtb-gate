@@ -38,21 +38,7 @@
 
 namespace {
 GateConfigStore configStore;
-GateConfig config = {
-  "Gate-1-setup",       // deviceId (overwritten by configStore.load())
-  "Gate 1",             // deviceLabel
-  "changeme123",        // apPassword
-  "",                   // staSsid
-  "",                   // staPassword
-  2.0F,                 // startThreshold
-  2.0F,                 // finishThreshold
-  2.0F,                 // line2Threshold
-  0.3F,                 // triggerDelta
-  1,                    // wifiChannel
-  GateRole::Start,      // role
-  "",                   // peerMac
-  1                     // gateNumber (1-based: 1=start, 2=finish, ...)
-};
+GateConfig config;  // overwritten by configStore.load() in setup()
 
 RunQueue queue;
 SensorGate startSensor(2.0F);
@@ -1064,16 +1050,20 @@ String statusJson() {
     entry["riderName"] = run->riderName;
     entry["status"] = runStatusName(run->status);
     JsonObject metrics = entry["metrics"].to<JsonObject>();
-    if (run->goAtMs > 0 && run->startTriggeredAtMs > 0)
-      metrics["reactionMs"] = (long)run->startTriggeredAtMs - (long)run->goAtMs;
+    // Official start timestamp respects officialTrigger setting (same as logRunSummary)
+    unsigned long officialStartMs = run->startTriggeredAtMs;
+    if (config.officialTrigger == "second" && run->line2TriggeredAtMs > 0)
+      officialStartMs = run->line2TriggeredAtMs;
+    if (run->goAtMs > 0 && officialStartMs > 0)
+      metrics["reactionMs"] = (long)officialStartMs - (long)run->goAtMs;
     else
       metrics["reactionMs"] = nullptr;
     if (run->startTriggeredAtMs > 0 && run->line2TriggeredAtMs > 0)
       metrics["launchMs"] = (long)(run->line2TriggeredAtMs - run->startTriggeredAtMs);
     else
       metrics["launchMs"] = nullptr;
-    if (run->startTriggeredAtMs > 0 && run->finishTriggeredAtMs > 0)
-      metrics["courseMs"] = (long)(run->finishTriggeredAtMs - run->startTriggeredAtMs);
+    if (officialStartMs > 0 && run->finishTriggeredAtMs > 0)
+      metrics["courseMs"] = (long)(run->finishTriggeredAtMs - officialStartMs);
     else
       metrics["courseMs"] = nullptr;
   }
@@ -1480,8 +1470,21 @@ void handleDeleteRiders() {
       }
     }
   }
+  // Bulk delete: {"all": true}
   if (tagId.length() == 0) {
-    sendJsonError(400, "tagId required");
+    String body = server.arg("plain");
+    if (body.length() > 0) {
+      JsonDocument doc;
+      if (deserializeJson(doc, body) == DeserializationError::Ok && doc["all"].is<bool>() && doc["all"].as<bool>()) {
+        riderStore.clearAll();
+        eventStore.logEvent("riders_cleared");
+        eventStore.exportRiders(riderStore);
+        broadcastRiders();
+        sendJson(200, R"({"ok":true,"cleared":true})");
+        return;
+      }
+    }
+    sendJsonError(400, "tagId required (or {\"all\":true} to clear all)");
     return;
   }
 
@@ -2240,7 +2243,7 @@ void handleSerialCommand(const String& rawCommand) {
   }
 
   if (command.equalsIgnoreCase("api ping")) {
-    printApiResponse(R"({"ok":true,"sent":false})");
+    printApiResponse(pingJson());
     return;
   }
 

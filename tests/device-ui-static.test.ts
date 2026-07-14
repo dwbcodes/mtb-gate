@@ -200,10 +200,10 @@ describe("device UI static contract", () => {
     assert.match(js, /wheelPayload\.officialTrigger = config\.officialTrigger/);
     assert.match(js, /\/api\/config\/wheeltrack/);
 
-    // Restore: covers gate identity
+    // Restore: covers gate identity (deviceLabel is derived, not restored)
     assert.match(js, /macPayload\.gateNumber = config\.gateNumber/);
     assert.match(js, /macPayload\.peerMac = config\.peerMac/);
-    assert.match(js, /macPayload\.deviceLabel = config\.deviceLabel/);
+    assert.doesNotMatch(js, /macPayload\.deviceLabel/);
 
     // UI: backup & restore controls exist on the Reset page
     assert.match(html, /id="downloadConfig"/);

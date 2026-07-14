@@ -355,8 +355,9 @@ async function deleteAllResults() {
   }
 }
 
-// AUTO-REFRESH: poll results every 2s when on the results page
+// AUTO-REFRESH: poll results every 2s when on the results page (paused when tab hidden)
 setInterval(() => {
+  if (document.hidden) return;
   const page = window.location.hash.slice(1) || 'results';
   if (page === 'results' || page === '') loadStatus();
 }, 2000);
@@ -735,14 +736,7 @@ async function factoryReset() {
 async function clearAllRiders() {
   if (!confirm('Delete all riders? Settings will be preserved.')) return;
   try {
-    const riders = await fetch('/api/riders').then(r => r.json());
-    for (const rider of riders) {
-      await fetch('/api/riders', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tagId: rider.tagId })
-      });
-    }
+    await apiJson('/api/riders', jsonOptions('DELETE', { all: true }));
     loadRiders();
     alert('All riders cleared!');
   } catch (err) {
@@ -809,7 +803,6 @@ async function restoreConfig(file) {
     const macPayload = {};
     if (config.gateNumber !== undefined) macPayload.gateNumber = config.gateNumber;
     if (config.peerMac !== undefined) macPayload.peerMac = config.peerMac;
-    if (config.deviceLabel !== undefined) macPayload.deviceLabel = config.deviceLabel;
 
     if (Object.keys(macPayload).length > 0) {
       await apiJson('/api/config/mac', jsonOptions('PUT', macPayload));

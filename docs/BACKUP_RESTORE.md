@@ -9,7 +9,7 @@ The **Reset** page in the device UI has a **Backup & Restore** section. Use it t
 | Field | Restored? | Notes |
 |---|---|---|
 | `gateNumber` | Yes | Determines role (1=Start, 12=Finish, 2–11=Intermediate) |
-| `deviceLabel` | Yes | Optional display name |
+| `deviceLabel` | No | Derived from gateNumber on every boot; exported for reference only |
 | `peerMac` | Yes | Start gate's peer MAC; finish gate auto-discovers so this may be empty |
 | `staSsid` | Yes | Station Wi-Fi network name |
 | `apPassword` | Yes | Stored in plaintext in the backup file |
